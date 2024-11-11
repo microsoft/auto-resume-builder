@@ -222,7 +222,6 @@ flowchart TD
         G[Edit Description]
         H[Click Save]
         I[Click Discard]
-        UI[Remove from UI]
     end
 
     %% Save Flow
@@ -231,11 +230,15 @@ flowchart TD
         S2[Update Description]
         S3[Update Resume]
         S4[Save Resume]
+        S5[Show Success Screen]
+        S6{Click Download?}
+        S7[Trigger Resume Download]
     end
 
     %% Discard Flow
     subgraph Discard_Process[Discard Process]
         D1[Set status = 'rejected']
+        D2[Show Discard Message]
     end
 
     End[End]
@@ -251,18 +254,25 @@ flowchart TD
     F -->|Edit| G
     G --> F
     
+    %% Save path with success screen and download option
     F -->|Save| H
-    H --> UI
-    UI --> S1
+    H --> S1
     S1 --> S2
     S2 --> S3
     S3 --> S4
-    S4 --> End
+    S4 --> S5
+    S5 --> S6
+    S6 -->|Yes| S7
+    S6 -->|No| End
+    S7 --> End
     
+    %% Discard path with feedback message
     F -->|Discard| I
-    I --> UI
-    UI --> D1
-    D1 --> End
+    I --> D1
+    D1 --> D2
+    D2 --> End
+
+
 ```
 
 #### Process Steps
