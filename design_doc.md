@@ -333,104 +333,9 @@ flowchart TD
    - Remove from UI
    - Log rejection reason (future enhancement)
 
-### Implementation Details
-
-#### Event Processing
-```python
-def process_key_member(member_entry):
-    # Store event
-    stored_event = _store_event(member_entry)
-    
-    # Get/create tracker
-    tracker = _get_or_create_tracker(member_entry)
-    
-    # Check update trigger
-    if _should_trigger_update(tracker):
-        tracker = _trigger_draft_creation(tracker)
-```
-
-#### Notification Processing
-```python
-def process_notifications():
-    # Find pending reviews
-    pending_reviews = get_pending_reviews()
-    
-    # Group by employee
-    grouped_reviews = group_by_employee(pending_reviews)
-    
-    for employee_id, reviews in grouped_reviews.items():
-        if should_notify(employee_id):
-            send_consolidated_notification(reviews)
-```
-
-#### User Interface Logic
-```javascript
-const handleSave = async (descriptions) => {
-    // Update UI immediately
-    setLoading(true);
-    
-    // Process each description
-    for (const desc of descriptions) {
-        await updateTracker({
-            status: 'yes',
-            description: desc
-        });
-    }
-    
-    // Refresh view
-    await loadPendingReviews();
-    setLoading(false);
-};
-```
 
 
-### 2. Core Processing Components
-
-#### Resume Update Processor
-- **Key Functions:**
-  - process_key_member(): Main entry point for processing new events
-  - _store_event(): Stores raw event data
-  - _get_or_create_tracker(): Manages resume tracker lifecycle
-  - _should_trigger_update(): Evaluates update triggers (40-hour threshold)
-  - _trigger_draft_creation(): Generates resume content
-  - _update_role_history(): Tracks role changes
-
-#### Update Triggers
-1. Hours Threshold:
-   - Initial threshold: 40 hours
-   - Tracked per project-employee combination
-   - Reset mechanism: None (continuous accumulation)
-
-2. Role Changes:
-   - Tracked in role_history array
-   - Maintains start/end dates for each role
-   - Triggers description updates on role changes
-
-### 3. Notification System
-
-#### Notification Manager
-- **Immediate Notifications:**
-  - Triggered when status changes to 'in_progress'
-  - Per-project notification with description
-  - Enforced 24-hour cooldown period
-
-- **Recurring Notifications:**
-  - Daily check for pending reviews
-  - Consolidated per employee
-  - Maximum 3 notification attempts
-  - Exponential backoff between attempts
-
-#### Notification States
-```mermaid
-stateDiagram-v2
-    [*] --> pending
-    pending --> sent: Notification Delivered
-    pending --> failed: Delivery Failed
-    failed --> pending: Retry
-    sent --> pending: New Update Available
-```
-
-### 4. User Interface
+### 3. User Interface
 
 #### Components
 1. **Header Section**
@@ -473,10 +378,10 @@ stateDiagram-v2
 ## Technical Implementation
 
 ### Backend Technologies
-- Python 3.8+
+- Python 3.12
 - Azure Cosmos DB SDK
 - Azure Identity for authentication
-- Logging framework for operational monitoring
+- Azure Communication Services SDK for email notifications
 
 ### Frontend Technologies
 - React 18+
