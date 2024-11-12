@@ -8,10 +8,7 @@ files = [
      'backend/ResumeUpdateProcessor.py',
      'backend/cosmosdb.py',
      'backend/testing.py',
-     'design_doc.md',
-     'main_process.md',
-     'recurring_notification.md',
-     'user_flow.md'
+     'frontend/src/components/ResumeReview.js',
 
 
 ]

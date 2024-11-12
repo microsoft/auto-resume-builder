@@ -1,111 +1,86 @@
-# Resume Update System Requirements
+# Resume Update System Design Document
 
 ## Overview
-A system to automatically generate and manage resume updates based on project work hours, with user review capabilities and notification management.
+A system to automatically generate and manage resume updates based on project work hours, with user review capabilities and notification management. The system tracks employee project participation and generates AI-powered resume updates when significant involvement thresholds are met.
 
-## Core Components
+## System Architecture
 
-### 1. Resume Update Tracking
-- Track project hours against a 40-hour threshold
-- Generate AI-powered project descriptions when threshold is met
-- Status tracking:
-  - "no" (initial)
-  - "in_progress" (description generated)
-  - "yes" (approved)
-  - "rejected" (discarded)
+### 1. Data Storage (Azure Cosmos DB)
+- **Databases:**
+  - ResumeAutomation
+    - Containers:
+      - project_key_members (Events)
+      - resume_trackers (State Management)
+      - notifications (Notification History)
+      - employee_metadata (Employee Metadata)
 
-### 2. Notification System
-#### Data Model
-- Separate notification tracker entity from resume update tracker
-- Notification tracker fields:
+- **Key Data Models:**
   ```json
+  // Event Document
   {
-    "id": "emp456",  // employee_id as id
-    "partitionKey": "notifications",
-    "type": "notification_tracker",
-    "employee_id": "emp456",
-    "employee_display_name": "Smith, John - emp456",
-    "last_notification_date": "2024-03-15T10:00:00Z",
-    "notification_attempts": 3,
-    "notification_status": "sent"  // pending, sent, failed
+    "id": "uuid",
+    "partitionKey": "<project_number>",
+    "type": "project_key_member",
+    "subject_area": "string",
+    "project_number": "string",
+    "project_role_name": "string",
+    "employee_display_name": "string",
+    "employee_id": "string",
+    "job_hours": "number",
+    "employee_job_family_function_code": "string",
+    "timestamp": "datetime"
   }
+
+  // Resume Tracker Document
+  {
+    "id": "<project_number>-<employee_id>",
+    "partitionKey": "resumeupdatestatus",
+    "type": "resume_update_tracker",
+    "employee_id": "string",
+    "employee_display_name": "string",
+    "project_number": "string",
+    "subject_area": "string",
+    "total_hours": "number",
+    "added_to_resume": "no|in_progress|yes|rejected",
+    "description": "string",
+    "created_timestamp": "datetime",
+    "last_updated": "datetime",
+    "version": "number",
+    "role_history": [{
+      "role_name": "string",
+      "job_family_code": "string",
+      "start_date": "datetime",
+      "end_date": "datetime|null"
+    }],
+    "review_date": "datetime"
+  }
+
+  //Notifications Document
+  {
+    "id": "notification-67890",
+    "partitionKey": "notifications",
+    "employee_id": "67890",
+    "last_notification": "2024-11-12T16:15:18.108287",
+  }
+
+  // Employee Metadata Document
+  {
+    "id": "metadata-<employee_id>",
+    "partitionKey": "metadata",
+    "employee_id": "string",
+    "email": "string",
+    "name": "string",
+    "department": "string"
+  }
+
   ```
 
-#### Notification Logic
-- Immediate notification when new description is generated
-- Recurring notification process for pending reviews
-- 24-hour minimum interval between notifications
-- Notifications consolidated per employee (not per project)
 
-### 3. User Review Interface
-#### Layout & Features
-- Dark theme with blue and green brand colors
-- Project cards showing:
-  - Project name and code in green header
-  - Editable text area for full project experience
-  - Individual discard buttons per project
-  - Single save button for all projects
-- Inactive "Tips" button in top right
-- Centered "Work Experience" header
-
-#### Project Content
-- Single editable text area containing:
-  - Project name
-  - Project details
-  - Achievements and metrics
-- Construction-themed sample content
-- Two projects displayed at a time
-
-#### User Actions
-- Edit project descriptions directly
-- Discard individual projects
-- Save all projects at once
-- Download updated resume (post-save)
-
-### 4. State Management
-#### Save Flow
-1. User edits and saves
-2. Backend processes updates
-3. Shows success screen
-4. Offers resume download option
-
-#### Discard Flow
-1. User clicks discard
-2. Updates backend status
-3. Shows discard confirmation
-4. Removes from UI
-
-## Technical Details
-### Frontend
-- React application
-- Tailwind CSS for styling
-- Lucide icons
-- Dark theme colors:
-  - Background: #111827
-  - Container: #1F2937
-  - Text areas: #111827
-  - Brand blue: #3B82F6
-  - Brand green: #22C55E
-
-### Backend Integration
-- API endpoints needed:
-  - GET pending reviews
-  - POST save updates
-  - POST discard project
-  - GET resume download
-
-## Future Considerations
-- Implement resume formatting guidance modal
-- Add loading states during API calls
-- Error handling UI
-- Enhanced validation
-
-
-[Previous sections remain the same until System Architecture]
 
 ## System Workflows
 
 ### 1. Main Processing Flow
+
 ```mermaid
 flowchart TD
     %% Input Section
@@ -128,13 +103,18 @@ flowchart TD
     subgraph Update_Decision[Update Decision]
         H{Hours >= 40?}
         I{Status = 'no'?}
+        L{Project on Resume?}
+        M[Set status to 'yes']
         J[Set status to 'in_progress']
         K[Update Hours Only]
         
         H -->|No| K
         H -->|Yes| I
         I -->|No| K
-        I -->|Yes| J
+        I -->|Yes| L
+        L -->|Yes| M
+        M --> K
+        L -->|No| J
     end
 
     %% Resume Update Process Section
@@ -151,11 +131,13 @@ flowchart TD
 
     %% Immediate Notification Process
     subgraph Notification[Notification Process]
-        N1[Get/Create Notification Tracker]
-        N2[Send Notification]
+        N1[Get/Create Notification Record]
+        N4[Employee Email Lookup]
+        N2[Send Email Notification]
         N3[Update Notification Status]
         
-        N1 --> N2
+        N1 --> N4
+        N4 --> N2
         N2 --> N3
     end
 
@@ -180,18 +162,21 @@ flowchart TD
    - Update tracker with latest information
    
 3. **Update Decision Logic**
-   - Check if total hours ≥ 40
-   - Verify current tracker status
-   - Determine if resume update needed
+   - Check if total hours ≥ HOURS_THRESHOLD. If no, exit.
+   - If yes, check if "added_to_resume" field in tracker = "no". If it is any other value, exit. 
+   - If "no", check if project already exists on resume. (in case it was manually added)
+   - If not, trigger create new work experience function
+
    
 4. **Resume Update Process**
    - Fetch current resume data
    - Gather project details
-   - Generate project experience description
+   - Generate new project experience description
    - Update tracker with new description
 
 5. **Notification Process**
    - Create/update notification tracker
+   - Fetch employee email from metadata table (via employee_id)
    - Send immediate notification
    - Record notification status
 
@@ -204,28 +189,30 @@ flowchart TD
     subgraph Pending_Review_Check[Find Pending Reviews]
         P1[Find All Resume Trackers with Status 'in_progress']
         P2[Group by Employee ID]
-        P3[Get Notification Trackers]
+        P3[Get Notification Records]
     end
     
     subgraph Notification_Check[Process Each Employee]
-        N1{Last Notification > 24h ago?}
+        N1{Last Notification > 48h ago?}
         N2[Get All Pending Reviews]
-        N3[Send Notification]
-        N4[Update Notification Status]
-        N5[Skip Employee]
+        N3[Lookup Employee Email]
+        N4[Send Email Notification]
+        N5[Update Notification Status]
+        N6[Skip Employee]
         
         N1 -->|Yes| N2
-        N1 -->|No| N5
+        N1 -->|No| N6
         N2 --> N3
         N3 --> N4
+        N4 --> N5
     end
     
     Start --> P1
     P1 --> P2
     P2 --> P3
     P3 --> N1
-    N4 --> End[End]
-    N5 --> End
+    N5 --> End[End]
+    N6 --> End
 ```
 
 #### Process Steps
@@ -235,9 +222,8 @@ flowchart TD
    - Retrieve notification history
 
 2. **Notification Eligibility**
-   - Check 24-hour cooldown period
-   - Verify notification attempts count
-   - Evaluate priority based on pending time
+   - Check 48-hour cooldown period
+
 
 3. **Notification Processing**
    - Consolidate multiple pending reviews
@@ -266,7 +252,6 @@ flowchart TD
         G[Edit Description]
         H[Click Save]
         I[Click Discard]
-        UI[Remove from UI]
     end
 
     %% Save Flow
@@ -275,11 +260,15 @@ flowchart TD
         S2[Update Description]
         S3[Update Resume]
         S4[Save Resume]
+        S5[Show Success Screen]
+        S6{Click Download?}
+        S7[Trigger Resume Download]
     end
 
     %% Discard Flow
     subgraph Discard_Process[Discard Process]
         D1[Set status = 'rejected']
+        D2[Show Discard Message]
     end
 
     End[End]
@@ -295,18 +284,25 @@ flowchart TD
     F -->|Edit| G
     G --> F
     
+    %% Save path with success screen and download option
     F -->|Save| H
-    H --> UI
-    UI --> S1
+    H --> S1
     S1 --> S2
     S2 --> S3
     S3 --> S4
-    S4 --> End
+    S4 --> S5
+    S5 --> S6
+    S6 -->|Yes| S7
+    S6 -->|No| End
+    S7 --> End
     
+    %% Discard path with feedback message
     F -->|Discard| I
-    I --> UI
-    UI --> D1
-    D1 --> End
+    I --> D1
+    D1 --> D2
+    D2 --> End
+
+
 ```
 
 #### Process Steps
@@ -387,4 +383,173 @@ const handleSave = async (descriptions) => {
 };
 ```
 
-[Rest of the document remains the same...]
+
+### 2. Core Processing Components
+
+#### Resume Update Processor
+- **Key Functions:**
+  - process_key_member(): Main entry point for processing new events
+  - _store_event(): Stores raw event data
+  - _get_or_create_tracker(): Manages resume tracker lifecycle
+  - _should_trigger_update(): Evaluates update triggers (40-hour threshold)
+  - _trigger_draft_creation(): Generates resume content
+  - _update_role_history(): Tracks role changes
+
+#### Update Triggers
+1. Hours Threshold:
+   - Initial threshold: 40 hours
+   - Tracked per project-employee combination
+   - Reset mechanism: None (continuous accumulation)
+
+2. Role Changes:
+   - Tracked in role_history array
+   - Maintains start/end dates for each role
+   - Triggers description updates on role changes
+
+### 3. Notification System
+
+#### Notification Manager
+- **Immediate Notifications:**
+  - Triggered when status changes to 'in_progress'
+  - Per-project notification with description
+  - Enforced 24-hour cooldown period
+
+- **Recurring Notifications:**
+  - Daily check for pending reviews
+  - Consolidated per employee
+  - Maximum 3 notification attempts
+  - Exponential backoff between attempts
+
+#### Notification States
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> sent: Notification Delivered
+    pending --> failed: Delivery Failed
+    failed --> pending: Retry
+    sent --> pending: New Update Available
+```
+
+### 4. User Interface
+
+#### Components
+1. **Header Section**
+   - Work Experience title
+   - Tips button (future feature)
+   - User identification
+
+2. **Project Cards**
+   - Project header (name + code)
+   - Role information
+   - Hours tracked
+   - Editable description
+   - Action buttons
+
+3. **Action Controls**
+   - Individual discard buttons
+   - Global save button
+   - Download resume button (post-save)
+
+#### State Management
+```mermaid
+stateDiagram-v2
+    [*] --> Loading
+    Loading --> DisplayingProjects: Data Fetched
+    DisplayingProjects --> Editing: User Edits
+    Editing --> Saving: Save Clicked
+    Saving --> DisplayingProjects: Save Complete
+    DisplayingProjects --> Discarding: Discard Clicked
+    Discarding --> DisplayingProjects: Discard Complete
+```
+
+### 5. Security & Authentication
+
+- Azure AD integration for authentication
+- DefaultAzureCredential for Cosmos DB access
+- Role-based access control:
+  - Employee: View/edit own resume updates
+  - Admin: View all updates (future feature)
+
+## Technical Implementation
+
+### Backend Technologies
+- Python 3.8+
+- Azure Cosmos DB SDK
+- Azure Identity for authentication
+- Logging framework for operational monitoring
+
+### Frontend Technologies
+- React 18+
+- Tailwind CSS
+- shadcn/ui components
+- Dark theme color palette:
+  ```css
+  --background: #111827;
+  --container: #1F2937;
+  --text-area: #111827;
+  --brand-blue: #3B82F6;
+  --brand-green: #22C55E;
+  ```
+
+## Testing Strategy
+
+### Unit Tests
+- Processor logic testing
+- Hours threshold validation
+- Role history tracking
+- Notification timing logic
+
+### Integration Tests
+- Event processing workflow
+- Tracker state transitions
+- Notification delivery
+- UI state management
+
+### Test Cases
+1. Under-threshold processing
+2. Threshold crossing triggers
+3. Role change handling
+4. Notification timing
+5. UI state transitions
+
+## Future Enhancements
+
+### Phase 1
+- Resume formatting guidance
+- Enhanced validation rules
+- Loading state indicators
+- Error handling improvements
+
+### Phase 2
+- Multi-project batch updates
+- Custom notification preferences
+- Admin dashboard
+- Analytics and reporting
+
+### Phase 3
+- AI-powered description improvements
+- Resume template customization
+- Integration with HR systems
+- Mobile-responsive UI
+
+## Operational Considerations
+
+### Monitoring
+- Azure Application Insights integration
+- Custom metrics:
+  - Event processing latency
+  - Description generation time
+  - Notification success rate
+  - User engagement metrics
+
+### Performance Optimization
+- Cosmos DB partition strategy
+- Notification batching
+- UI rendering optimization
+- Caching strategy
+
+### Disaster Recovery
+- Data backup schedule
+- Recovery point objectives
+- System restore procedures
+- Incident response plan
