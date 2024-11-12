@@ -3,6 +3,9 @@ from typing import Dict, List
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
+from dotenv import load_dotenv
+import os
+from azure.communication.email import EmailClient
 
 class ResumeUpdateProcessor:
     def __init__(self):
@@ -14,7 +17,18 @@ class ResumeUpdateProcessor:
             cosmos_database_id="ResumeAutomation",
             cosmos_container_id="resume_trackers"
         )
+        self.notification_container = CosmosDBManager(
+            cosmos_database_id="ResumeAutomation",
+            cosmos_container_id="notifications"
+        )
+        self.employee_metadata_container = CosmosDBManager(
+            cosmos_database_id="ResumeAutomation",
+            cosmos_container_id="employee_metadata"
+        )
         self.logger = logging.getLogger(__name__)
+        load_dotenv()
+        connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
+        self.email_client = EmailClient.from_connection_string(connection_string)
         
     def process_key_member(self, member_entry: Dict) -> Dict:
         """Process an incoming key member entry."""
@@ -96,6 +110,85 @@ class ResumeUpdateProcessor:
                f"Led initiatives in {', '.join(project_data['technologies'])} while driving "\
                f"digital transformation efforts."
 
+
+    def _get_employee_email(self, employee_id: str) -> str:
+        """Get employee email from metadata container."""
+        try:
+            results = self.employee_metadata_container.query_items(
+                query="SELECT * FROM c WHERE c.employee_id = @employee_id",
+                parameters=[{"name": "@employee_id", "value": employee_id}],
+                partition_key="metadata"
+            )
+            
+            if results:
+                return results[0].get('email')
+            else:
+                # For testing - return default email if no record exists
+                self.logger.warning(f"No email found for employee {employee_id}, using default")
+                return "NA"
+                
+        except Exception as e:
+            self.logger.error(f"Error getting employee email: {str(e)}")
+            return None
+
+    def _send_notification(self, employee_id: str) -> bool:
+        """Send email notification to employee."""
+        try:
+            # Get employee email
+            employee_email = self._get_employee_email(employee_id)
+            if not employee_email:
+                self.logger.error(f"Could not send notification - no email found for employee {employee_id}")
+                return False
+
+            message = {
+                "senderAddress": "DoNotReply@5fec6054-f6e1-4926-9c37-029ca719c8ae.azurecomm.net",
+                "recipients": {
+                    "to": [{"address": employee_email}]
+                },
+                "content": {
+                    "subject": "Resume Update Required",
+                    "plainText": "You have a pending resume update to review.",
+                    "html": """
+                    <html>
+                        <body>
+                            <h1>Resume Update Review Required</h1>
+                            <p>You have a pending resume update that needs your review.</p>
+                            <p>Please log in to review and approve the updates.</p>
+                        </body>
+                    </html>"""
+                }
+            }
+
+            poller = self.email_client.begin_send(message)
+            result = poller.result()
+            self.logger.info(f"Email sent to {employee_email}: {result}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error sending email notification: {str(e)}")
+            return False
+
+    def _update_notification_record(self, employee_id: str) -> Dict:
+        """Create or update notification record for an employee."""
+        try:
+            notification = {
+                "id": f"notification-{employee_id}",
+                "partitionKey": "notifications",
+                "employee_id": employee_id,
+                "last_notification": datetime.utcnow().isoformat()
+            }
+
+            # Try to create new document
+            try:
+                return self.notification_container.create_item(notification)
+            except:
+                # If creation fails (document exists), update the existing one
+                return self.notification_container.update_item(notification)
+
+        except Exception as e:
+            self.logger.error(f"Error updating notification record: {str(e)}")
+            raise
+
     def _trigger_draft_creation(self, tracker: Dict) -> Dict:
         """Process resume update for the given tracker."""
         try:
@@ -120,8 +213,15 @@ class ResumeUpdateProcessor:
             tracker['last_updated'] = datetime.utcnow().isoformat()
             tracker['version'] += 1
             
-            # Save the updated tracker back to cosmos
-            return self.trackers_container.update_item(tracker)
+            # Save the updated tracker
+            updated_tracker = self.trackers_container.update_item(tracker)
+
+            # Send notification and update notification record
+            if self._send_notification(tracker['employee_id']):
+                print("Notification sent successfully")
+                self._update_notification_record(tracker['employee_id'])
+            
+            return updated_tracker
             
         except Exception as e:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
@@ -198,8 +298,6 @@ class ResumeUpdateProcessor:
                 "created_timestamp": datetime.utcnow().isoformat(),
                 "last_updated": datetime.utcnow().isoformat(),
                 "version": 1,
-                "notification_status": "pending",
-                "notification_attempts": 0,
                 "role_history": [
                     {
                         "role_name": member_entry['project_role_name'],
