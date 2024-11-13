@@ -1,19 +1,23 @@
 from ResumeUpdateProcessor import ResumeUpdateProcessor
 from pprint import pprint
+import json
+import os
 
 # Create single processor instance to be used across all tests
 processor = ResumeUpdateProcessor()
 
+def load_json_file(filename):
+    """Helper function to load JSON data from sample_data directory"""
+    # Get the directory of the current script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Navigate up one level and then into sample_data
+    file_path = os.path.join(current_dir, '..', 'sample_data', filename)
+    with open(file_path, 'r') as f:
+        return json.load(f)
+
 def create_employee_metadata():
     """Create metadata entry for test employee"""
-    metadata = {
-        "id": "metadata-99999",
-        "partitionKey": "metadata",
-        "employee_id": "99999",
-        "email": "abc@xyz.com",
-        "name": "Dan Giannone",
-        "department": "Engineering"
-    }
+    metadata = load_json_file('metadata_1.json')
     
     try:
         processor.employee_metadata_container.create_item(metadata)
@@ -28,37 +32,21 @@ def test_case_1_under_threshold():
     """
     print("\n=== Test Case 1: Multiple Events Under Threshold ===")
     
-    # First entry - 25 hours
-    test_entry1 = {
-        "subject_area": "fsu",
-        "project_number": "259014",
-        "project_role_name": "PMCL",
-        "employee_display_name": "Giannone, Dan - 99999",
-        "job_hours": 25.0,
-        "employee_job_family_function_code": "ENCE"
-    }
-    
-    print("\nProcessing first entry (25 hours)...")
+    # Load and process first event
+    test_entry1 = load_json_file('event_1.json')
+    print(f"\nProcessing first entry ({test_entry1['job_hours']} hours)...")
     result1 = processor.process_key_member(test_entry1)
     print(f"Result: {result1}")
     print("\nChecking tracker status...")
-    view_tracker_status("259014-99999")
+    view_tracker_status(f"{test_entry1['project_number']}-{test_entry1['employee_display_name'].split()[-1]}")
     
-    # Second entry - 35 hours (same employee)
-    test_entry2 = {
-        "subject_area": "fsu",
-        "project_number": "259014",
-        "project_role_name": "PMCL",
-        "employee_display_name": "Giannone, Dan - 99999",
-        "job_hours": 35.0,
-        "employee_job_family_function_code": "ENCE"
-    }
-    
-    print("\nProcessing second entry (35 hours)...")
+    # Load and process second event
+    test_entry2 = load_json_file('event_2.json')
+    print(f"\nProcessing second entry ({test_entry2['job_hours']} hours)...")
     result2 = processor.process_key_member(test_entry2)
     print(f"Result: {result2}")
     print("\nChecking tracker status...")
-    view_tracker_status("259014-99999")
+    view_tracker_status(f"{test_entry2['project_number']}-{test_entry2['employee_display_name'].split()[-1]}")
     
     return [result1, result2]
 
@@ -69,20 +57,14 @@ def test_case_2_trigger_draft():
     """
     print("\n=== Test Case 2: Events Triggering Draft Creation ===")
     
-    test_entry = {
-        "subject_area": "fsu",
-        "project_number": "259014",
-        "project_role_name": "PMCL",
-        "employee_display_name": "Giannone, Dan - 99999",
-        "job_hours": 45.0,
-        "employee_job_family_function_code": "ENCE"
-    }
-    
-    print("\nProcessing entry crossing threshold (45 hours)...")
+    test_entry = load_json_file('event_3.json')
+    print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
     result = processor.process_key_member(test_entry)
     print(f"Result: {result}")
+    
+    tracker_id = f"{test_entry['project_number']}-{test_entry['employee_display_name'].split()[-1]}"
     print("\nChecking detailed tracker status...")
-    tracker = view_tracker_status("259014-99999", detailed=True)
+    tracker = view_tracker_status(tracker_id, detailed=True)
     
     # Verify the description was generated and status changed
     assert tracker['added_to_resume'] == 'in_progress', "Status should be 'in_progress'"
@@ -98,20 +80,14 @@ def test_case_3_above_threshold_already_processed():
     """
     print("\n=== Test Case 3: Updates After Draft Triggered ===")
     
-    test_entry = {
-        "subject_area": "fsu",
-        "project_number": "259014",
-        "project_role_name": "PMCL",
-        "employee_display_name": "Giannone, Dan - 99999",
-        "job_hours": 52.0,
-        "employee_job_family_function_code": "ENCE"
-    }
-    
-    print("\nProcessing updated entry (52 hours)...")
+    test_entry = load_json_file('event_4.json')
+    print(f"\nProcessing updated entry ({test_entry['job_hours']} hours)...")
     result = processor.process_key_member(test_entry)
     print(f"Result: {result}")
+    
+    tracker_id = f"{test_entry['project_number']}-{test_entry['employee_display_name'].split()[-1]}"
     print("\nChecking tracker status...")
-    tracker = view_tracker_status("259014-99999", detailed=True)
+    tracker = view_tracker_status(tracker_id, detailed=True)
     
     # Verify the description hasn't changed
     assert tracker['added_to_resume'] == 'in_progress', "Status should still be 'in_progress'"
@@ -148,11 +124,16 @@ def view_tracker_status(tracker_id: str, detailed=False):
 
 def cleanup_test_data():
     """Clean up test data"""
+    # Get project number from first event to use in cleanup
+    first_event = load_json_file('event_1.json')
+    project_number = first_event['project_number']
+    employee_id = first_event['employee_display_name'].split()[-1]
+    
     # Clean events for project
-    query = "SELECT * FROM c WHERE c.project_number = '259014'"
+    query = f"SELECT * FROM c WHERE c.project_number = '{project_number}'"
     items = processor.events_container.query_items(
         query=query, 
-        partition_key="259014"
+        partition_key=project_number
     )
     for item in items:
         processor.events_container.delete_item(item['id'], item['partitionKey'])
@@ -160,14 +141,14 @@ def cleanup_test_data():
     
     # Clean tracker
     try:
-        processor.trackers_container.delete_item("259014-99999", "resumeupdatestatus")
+        processor.trackers_container.delete_item(f"{project_number}-{employee_id}", "resumeupdatestatus")
         print("Deleted resume tracker")
     except Exception as e:
         print(f"Error deleting resume tracker: {str(e)}")
 
     # Clean notification
     try:
-        processor.notifications.delete_item("notification-99999", "notifications")
+        processor.notifications.delete_item(f"notification-{employee_id}", "notifications")
         print("Deleted notification record")
     except Exception as e:
         print(f"Error deleting notification: {str(e)}")

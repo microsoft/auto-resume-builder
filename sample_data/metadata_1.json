@@ -1,0 +1,8 @@
+{
+    "id": "metadata-99999",
+    "partitionKey": "metadata",
+    "employee_id": "99999",
+    "email": "dangiannone@microsoft.com",
+    "name": "Dan Giannone",
+    "department": "Engineering"
+}
