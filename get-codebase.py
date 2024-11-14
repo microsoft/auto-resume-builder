@@ -2,15 +2,19 @@
 
 import os
 # Specify the directory containing the code files
-directory = 'D:/projects/auto-resume-updates/'
+directory = 'D:/projects/auto-resume-builder/'
 
 files = [
-     'backend/ResumeUpdateProcessor.py',
-     'backend/cosmosdb.py',
-     'backend/testing.py',
-     'frontend/src/components/ResumeReview.js',
-
-
+    'backend/ResumeUpdateProcessor.py',
+    'backend/cosmosdb.py',
+    'backend/testing.py',
+    'frontend/src/components/ResumeReview/EmptyScreen.js',
+    'frontend/src/components/ResumeReview/ErrorScreen.js',
+    'frontend/src/components/ResumeReview/LoadingScreen.js',
+    'frontend/src/components/ResumeReview/ReviewScreen.js',
+    'frontend/src/components/ResumeReview/SuccessScreen.js',
+    'frontend/src/components/ResumeReview/api.js',
+    'frontend/src/components/ResumeReview/index.js'
 ]
 
 # Specify the output file path

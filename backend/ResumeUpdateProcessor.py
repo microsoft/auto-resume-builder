@@ -329,13 +329,72 @@ class ResumeUpdateProcessor:
                 "end_date": None
             })
 
-    def get_pending_updates(self) -> List[Dict]:
-        """Get all pending resume updates across all employees and projects."""
+    def get_pending_updates(self, employee_id: str) -> List[Dict]:
+        """
+        Get all pending resume updates for a specific employee.
+        Returns updates where added_to_resume = 'in_progress'.
+        """
         query = """
-            
+            SELECT *
+            FROM c
+            WHERE c.partitionKey = 'resumeupdatestatus'
+            AND c.employee_id = @employee_id
+            AND c.added_to_resume = 'in_progress'
         """
         
-        return self.trackers_container.query_items(
+        parameters = [
+            {"name": "@employee_id", "value": employee_id}
+        ]
+        
+        # Query Cosmos DB for pending updates
+        pending_updates = self.trackers_container.query_items(
             query=query,
+            parameters=parameters,
             partition_key="resumeupdatestatus"
         )
+        
+        return pending_updates
+    
+    def discard_update(self, project_id: str) -> bool:
+        """
+        Discard a pending resume update by setting its status to 'discarded'.
+        
+        Args:
+            project_id: The ID of the resume tracker to discard
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Query the tracker directly by ID
+            results = self.trackers_container.query_items(
+                query="SELECT * FROM c WHERE c.id = @id",
+                parameters=[{"name": "@id", "value": project_id}],
+                partition_key="resumeupdatestatus"
+            )
+            
+            for result in results:
+                print(result)
+
+            # Convert results to list and get first item if it exists
+            results_list = list(results)
+            if not results_list:
+                self.logger.error(f"No tracker found with ID: {project_id}")
+                return False
+                
+            tracker = results_list[0]
+                    
+            # Update the status to 'discarded'
+            tracker['added_to_resume'] = 'discarded'
+            tracker['last_updated'] = datetime.utcnow().isoformat()
+            tracker['version'] += 1
+            
+            # Save the updated tracker
+            self.trackers_container.update_item(tracker)
+            
+            self.logger.info(f"Successfully discarded update for tracker: {project_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error discarding update: {str(e)}")
+            return False

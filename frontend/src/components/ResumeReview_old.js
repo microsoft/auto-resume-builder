@@ -1,37 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileText, Download, Check, X, HelpCircle } from 'lucide-react';
 
 const ResumeReview = () => {
   const [viewState, setViewState] = useState('review');
-  const [resumeContent, setResumeContent] = useState({
-    projects: [
-      {
-        id: 1,
-        name: "Hospital Expansion Project",
-        code: "HEP-2024",
-        content: `Hospital Expansion Project
+  const [resumeContent, setResumeContent] = useState({ projects: [] });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-Led $75M hospital expansion project (2023-2024). Managed construction of new 50,000 sq ft emergency department wing:
-• Coordinated team of 12 subcontractors and 80+ construction personnel
-• Implemented new BIM coordination process reducing rework by 35%
-• Delivered project 2 months ahead of schedule through effective fast-tracking
-• Achieved LEED Gold certification through sustainable construction practices`
-      },
-      {
-        id: 2,
-        name: "Infrastructure Modernization",
-        code: "IM-2024",
-        content: `Infrastructure Modernization
+  useEffect(() => {
+    fetchPendingUpdates();
+  }, []);
 
-Project Manager for $45M city infrastructure upgrade (2022-2023). Scope included bridge rehabilitation and utility upgrades:
-• Managed complex phasing plan minimizing traffic disruption in high-volume urban area
-• Coordinated with 5 utility companies for underground infrastructure replacement
-• Implemented innovative construction methods reducing project duration by 20%
-• Completed project under budget through value engineering initiatives
-• Successfully maintained emergency service access throughout construction`
+  const fetchPendingUpdates = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('http://localhost:5000/get_pending_updates');
+      const data = await response.json();
+      
+      if (data.status === 'success') {
+        setResumeContent({ projects: data.projects });
+      } else {
+        setError('Failed to load updates');
       }
-    ]
-  });
+    } catch (err) {
+      setError('Failed to connect to server');
+      console.error('Error fetching updates:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -52,6 +49,22 @@ Project Manager for $45M city infrastructure upgrade (2022-2023). Scope included
   const handleDownload = () => {
     console.log('Downloading resume...');
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 p-8 flex items-center justify-center">
+        <div className="text-blue-500 text-xl">Loading updates...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-900 p-8 flex items-center justify-center">
+        <div className="text-red-500 text-xl">{error}</div>
+      </div>
+    );
+  }
 
   const ReviewScreen = () => (
     <div className="flex-1 flex flex-col">
