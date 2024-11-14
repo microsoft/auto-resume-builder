@@ -332,9 +332,7 @@ class ResumeUpdateProcessor:
     def get_pending_updates(self) -> List[Dict]:
         """Get all pending resume updates across all employees and projects."""
         query = """
-            SELECT * FROM c
-            WHERE c.added_to_resume = 'no'
-            AND c.total_hours >= 40
+            
         """
         
         return self.trackers_container.query_items(
