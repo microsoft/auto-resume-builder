@@ -40,17 +40,25 @@ const ResumeReview = () => {
   };
 
   const handleDiscard = async (projectId) => {
-    try {
-        await discardUpdate(projectId);
-        setResumeContent(prev => ({
-            ...prev,
-            projects: prev.projects.filter(p => p.id !== projectId)
-        }));
-    } catch (error) {
-        console.error('Error discarding update:', error);
-        // Optionally show an error message to the user
-    }
-};
+    setResumeContent(prev => ({
+      ...prev,
+      projects: prev.projects.filter(p => p.id !== projectId)
+    }));
+  };
+
+  if (isLoading) return <LoadingScreen />;
+  if (error) return <ErrorScreen message={error} />;
+
+  // If we're in review state and there are no projects, show empty screen
+  if (viewState === 'review' && resumeContent.projects.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-900 p-8">
+        <div className="max-w-4xl mx-auto">
+          <EmptyScreen />
+        </div>
+      </div>
+    );
+  }
 
   const screens = {
     review: <ReviewScreen 
