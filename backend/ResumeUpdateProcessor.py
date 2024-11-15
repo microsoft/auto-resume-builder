@@ -95,39 +95,33 @@ class ResumeUpdateProcessor:
             raise
 
     def _get_resume(self, employee_id: str) -> Dict:
-        """
-        Temporary implementation that returns a dummy resume.
-        Will be replaced with actual resume fetch logic later.
-        """
-        return {
-            "employee_id": employee_id,
-            "name": "John Doe",
-            "summary": "Experienced professional with background in project management",
-            "experience": [
-                {
-                    "company": "Previous Company",
-                    "role": "Senior Project Manager",
-                    "description": "Led multiple successful projects..."
-                }
-            ]
-        }
+        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
+                      credential=self.credential)
+
+        results =  search_client.search(
+            search_text=employee_id ,
+            search_fields=['sourceFileName'],
+            select="id, date, jobTitle, experienceLevel, content, sourceFileName")
+        
+        for result in results: 
+            return result
 
     def _get_project(self, project_number: str) -> Dict:
-        """
-        Temporary implementation that returns dummy project details.
-        Will be replaced with actual project fetch logic later.
-        """
-        return {
-            "project_number": project_number,
-            "name": "Strategic Initiative Project",
-            "description": "A large-scale digital transformation project focusing on modernizing core systems",
-            "start_date": "2024-01-01",
-            "status": "In Progress",
-            "industry": "Financial Services",
-            "technologies": ["Cloud", "API", "Microservices"]
-        }
+        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+                      credential=self.credential)
 
-    def _generate_project_experience(project_data: Dict, role_name: str, resume: Dict) -> str:
+        search_results =  search_client.search(
+            search_text="*" ,
+            filter="project_id eq '" + project_number + "'",
+            select="id, project_id, date, content, sourcefilename, sourcepage")
+        
+        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+
+        return sorted_results
+
+    def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
         Function for generating a project summary using the project data and resume data.
         """
@@ -142,7 +136,7 @@ class ResumeUpdateProcessor:
         #Invoke LLM
         response = primary_llm.invoke(messages)
 
-        return response
+        return response.content
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
