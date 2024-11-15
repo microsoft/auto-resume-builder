@@ -5,7 +5,33 @@ from cosmosdb import CosmosDBManager
 import uuid
 from dotenv import load_dotenv
 import os
+from prompts import generate_work_experience_system_prompt
 from azure.communication.email import EmailClient
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents import SearchClient
+from langchain_openai import AzureChatOpenAI
+
+load_dotenv()
+
+# Azure OpenAI
+aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+aoai_key = os.getenv("AZURE_OPENAI_API_KEY")
+aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+#Azure AI Search
+credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
+
+primary_llm = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-05-01-preview",
+    temperature=0.75,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint
+)
 
 class ResumeUpdateProcessor:
     def __init__(self):
@@ -101,15 +127,22 @@ class ResumeUpdateProcessor:
             "technologies": ["Cloud", "API", "Microservices"]
         }
 
-    def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
+    def _generate_project_experience(project_data: Dict, role_name: str, resume: Dict) -> str:
         """
-        Temporary implementation that returns a placeholder project experience description.
-        Will be replaced with LLM-based generation later.
+        Function for generating a project summary using the project data and resume data.
         """
-        return f"Served as {role_name} on {project_data['name']}, a {project_data['industry']} project. "\
-               f"Led initiatives in {', '.join(project_data['technologies'])} while driving "\
-               f"digital transformation efforts."
+        project_string = ""
+        for project in project_data:
+            project_string = project_string + project["content"]
 
+        #Prepare messages for LLM
+        work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
+        messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
+        messages.append({"role": "user", "content": work_experience_user_message})
+        #Invoke LLM
+        response = primary_llm.invoke(messages)
+
+        return response
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
