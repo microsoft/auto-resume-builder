@@ -80,7 +80,7 @@ class ResumeUpdateProcessor:
         results =  search_client.search(
             search_text=employee_id ,
             search_fields=['sourceFileName'],
-            select="id, date, jobTitle, experienceLevel, content, sourceFileName")
+            select="id,employee_first_name,employee_last_name, date, jobTitle, experienceLevel, content, sourceFileName")
         
         for result in results: 
             return result
