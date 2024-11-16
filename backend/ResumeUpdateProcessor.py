@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Any
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
@@ -9,6 +9,10 @@ from azure.communication.email import EmailClient
 
 class ResumeUpdateProcessor:
     def __init__(self):
+        # Constants
+        self.NOTIFICATION_COOLDOWN_HOURS = 0
+        self.HOURS_THRESHOLD = 40
+        
         self.events_container = CosmosDBManager(
             cosmos_database_id="ResumeAutomation",
             cosmos_container_id="project_key_members"
@@ -26,9 +30,11 @@ class ResumeUpdateProcessor:
             cosmos_container_id="employee_metadata"
         )
         self.logger = logging.getLogger(__name__)
+        self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
         load_dotenv()
         connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
         self.email_client = EmailClient.from_connection_string(connection_string)
+        self.webapp_url = os.environ.get("WEBAPP_URL")
         
     def process_key_member(self, member_entry: Dict) -> Dict:
         """Process an incoming key member entry."""
@@ -132,13 +138,13 @@ class ResumeUpdateProcessor:
             return None
 
     def _send_notification(self, employee_id: str) -> bool:
-        """Send email notification to employee."""
         try:
-            # Get employee email
             employee_email = self._get_employee_email(employee_id)
             if not employee_email:
                 self.logger.error(f"Could not send notification - no email found for employee {employee_id}")
                 return False
+
+            review_link = f"{self.webapp_url}/resume-review"
 
             message = {
                 "senderAddress": "DoNotReply@5fec6054-f6e1-4926-9c37-029ca719c8ae.azurecomm.net",
@@ -147,13 +153,75 @@ class ResumeUpdateProcessor:
                 },
                 "content": {
                     "subject": "Resume Update Required",
-                    "plainText": "You have a pending resume update to review.",
-                    "html": """
+                    "plainText": (
+                        "Hello,\n\n"
+                        "You have a pending resume update that requires your review. Please take a moment to review and approve these updates to keep your resume current.\n\n"
+                        f"Review your updates here: {review_link}\n\n"
+                        "This is an automated message. Please do not reply to this email."
+                    ),
+                    "html": f"""
                     <html>
+                        <head>
+                            <style>
+                                body {{
+                                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+                                    line-height: 1.6;
+                                    margin: 0;
+                                    padding: 0;
+                                    background-color: #ffffff;
+                                }}
+                                .container {{
+                                    max-width: 600px;
+                                    margin: 0 auto;
+                                    background: #ffffff;
+                                }}
+                                .header {{
+                                    background-color: #003087;
+                                    padding: 20px;
+                                    text-align: left;
+                                }}
+                                .header h1 {{
+                                    margin: 0;
+                                    color: #ffffff;
+                                    font-size: 20px;
+                                    font-weight: 500;
+                                }}
+                                .content {{
+                                    padding: 40px 20px;
+                                    color: #333333;
+                                }}
+                                .button {{
+                                    display: inline-block;
+                                    background-color: #7AC143;
+                                    color: #ffffff;
+                                    padding: 10px 24px;
+                                    text-decoration: none;
+                                    border-radius: 4px;
+                                    font-weight: 500;
+                                    margin-top: 20px;
+                                }}
+                                .footer {{
+                                    padding: 20px;
+                                    color: #666666;
+                                    font-size: 14px;
+                                    border-top: 1px solid #eeeeee;
+                                }}
+                            </style>
+                        </head>
                         <body>
-                            <h1>Resume Update Review Required</h1>
-                            <p>You have a pending resume update that needs your review.</p>
-                            <p>Please log in to review and approve the updates.</p>
+                            <div class="container">
+                                <div class="header">
+                                    <h1>📄 Resume Update Review Required</h1>
+                                </div>
+                                <div class="content">
+                                    <p>Hello,</p>
+                                    <p>You have a pending resume update that requires your review. Please take a moment to review and approve these updates to keep your resume current.</p>
+                                    <a href="{review_link}" class="button">Review Updates Now</a>
+                                </div>
+                                <div class="footer">
+                                    This is an automated message. Please do not reply to this email.
+                                </div>
+                            </div>
                         </body>
                     </html>"""
                 }
@@ -169,7 +237,7 @@ class ResumeUpdateProcessor:
             return False
 
     def _update_notification_record(self, employee_id: str) -> Dict:
-        """Create or update notification record for an employee."""
+        """Update notification record with latest notification time."""
         try:
             notification = {
                 "id": f"notification-{employee_id}",
@@ -177,13 +245,7 @@ class ResumeUpdateProcessor:
                 "employee_id": employee_id,
                 "last_notification": datetime.utcnow().isoformat()
             }
-
-            # Try to create new document
-            try:
-                return self.notification_container.create_item(notification)
-            except:
-                # If creation fails (document exists), update the existing one
-                return self.notification_container.update_item(notification)
+            return self.notification_container.update_item(notification)
 
         except Exception as e:
             self.logger.error(f"Error updating notification record: {str(e)}")
@@ -232,7 +294,7 @@ class ResumeUpdateProcessor:
         Determine if we should trigger a resume update.
         Returns True if hours >= 40 and status is 'no'
         """
-        return (tracker['total_hours'] >= 40 and 
+        return (tracker['total_hours'] >= self.HOURS_THRESHOLD and 
                 tracker['added_to_resume'] == 'no')
 
     def _store_event(self, member_entry: Dict) -> Dict:
@@ -329,31 +391,33 @@ class ResumeUpdateProcessor:
                 "end_date": None
             })
 
-    def get_pending_updates(self, employee_id: str) -> List[Dict]:
+    def get_pending_updates(self, employee_id: str = None) -> List[Dict]:
         """
-        Get all pending resume updates for a specific employee.
+        Get all pending resume updates for a specific employee or all employees.
         Returns updates where added_to_resume = 'in_progress'.
+        
+        Args:
+            employee_id: Optional employee ID. If None, returns updates for all employees.
         """
-        query = """
+        base_query = """
             SELECT *
             FROM c
             WHERE c.partitionKey = 'resumeupdatestatus'
-            AND c.employee_id = @employee_id
             AND c.added_to_resume = 'in_progress'
         """
         
-        parameters = [
-            {"name": "@employee_id", "value": employee_id}
-        ]
+        if employee_id:
+            query = base_query + " AND c.employee_id = @employee_id"
+            parameters = [{"name": "@employee_id", "value": employee_id}]
+        else:
+            query = base_query
+            parameters = []
         
-        # Query Cosmos DB for pending updates
-        pending_updates = self.trackers_container.query_items(
+        return self.trackers_container.query_items(
             query=query,
             parameters=parameters,
             partition_key="resumeupdatestatus"
         )
-        
-        return pending_updates
     
     def discard_update(self, project_id: str) -> bool:
         """
@@ -398,3 +462,83 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error discarding update: {str(e)}")
             return False
+    
+    def recurring_notification(self) -> Dict[str, Any]:
+        """
+        Process recurring notifications for pending resume updates.
+        Returns summary of notifications sent.
+        """
+        try:
+            self.logger.info("Starting recurring notification process")
+            summary = {
+                "total_employees_processed": 0,  # Added this field
+                "notifications_sent": 0,
+                "skipped_cooldown": 0,
+                "errors": 0
+            }
+
+            # Get all employees with pending updates
+            pending_updates = self.get_pending_updates()
+            
+            # Get unique employee IDs
+            employees_to_notify = {update['employee_id'] for update in pending_updates}
+            summary["total_employees_processed"] = len(employees_to_notify)
+            
+            # Process each employee
+            for employee_id in employees_to_notify:
+                try:
+                    if self._should_send_notification(employee_id):
+                        if self._send_notification(employee_id):
+                            self._update_notification_record(employee_id)
+                            summary["notifications_sent"] += 1
+                    else:
+                        summary["skipped_cooldown"] += 1
+                except Exception as e:
+                    self.logger.error(f"Error processing notifications for employee {employee_id}: {str(e)}")
+                    summary["errors"] += 1
+
+            self.logger.info(f"Recurring notification process completed: {summary}")
+            return summary
+
+        except Exception as e:
+            self.logger.error(f"Error in recurring notification process: {str(e)}")
+            raise
+
+
+    def _should_send_notification(self, employee_id: str) -> bool:
+        """
+        Check if notification should be sent based on cooldown period.
+        Returns True if last notification was more than cooldown period ago.
+        """
+        try:
+            query = """
+                SELECT * FROM c 
+                WHERE c.partitionKey = 'notifications'
+                AND c.id = @notification_id
+            """
+            parameters = [
+                {"name": "@notification_id", "value": f"notification-{employee_id}"}
+            ]
+            results = list(self.notification_container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key="notifications"
+            ))
+
+            if not results:
+                return True
+
+            notification_record = results[0]
+            last_notification = datetime.fromisoformat(notification_record['last_notification'])
+            
+            return datetime.utcnow() - last_notification > self.notification_cooldown
+
+        except Exception as e:
+            self.logger.error(f"Error checking notification eligibility: {str(e)}")
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error checking notification eligibility: {str(e)}")
+            return False
+
+    
