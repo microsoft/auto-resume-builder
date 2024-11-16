@@ -5,6 +5,8 @@ openai==1.35.13
 azure-storage-blob==12.22.0
 python-dotenv
 flask
+flask-cors
 langchain-openai
 azure-core
 azure-identity==1.18.0
+azure-communication-email
