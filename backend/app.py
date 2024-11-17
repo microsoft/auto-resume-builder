@@ -19,18 +19,38 @@ CORS(app)
 # Initialize processor
 processor = ResumeUpdateProcessor()
 
-EMPLOYEE_ID = "99999"
+def get_current_user_id():
+    """
+    Placeholder function to get the current user's ID.
+    Will be replaced with actual authentication logic later.
+    """
+    return "99999"
+
+@app.route('/get_current_user', methods=['GET'])
+def get_current_user():
+    try:
+        user_id = get_current_user_id()
+        return jsonify({
+            'status': 'success',
+            'employeeId': user_id
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 @app.route('/get_pending_updates', methods=['GET'])
 def get_pending_updates():
-    pending_updates = processor.get_pending_updates(EMPLOYEE_ID)
+    employee_id = get_current_user_id()
+    pending_updates = processor.get_pending_updates(employee_id)
     
     formatted_updates = []
     for update in pending_updates:
         formatted_updates.append({
             'id': update['id'],
             'name': update.get('subject_area', 'Unknown Project'),
-            'code': update['project_number'],
+            'project_number': update['project_number'],  # Changed from code to project_number
             'content': update.get('description', ''),
             'total_hours': update.get('total_hours', 0),
             'role': update['role_history'][-1]['role_name'] if update.get('role_history') else 'Unknown Role'
@@ -45,15 +65,19 @@ def get_pending_updates():
 def discard_update():
     try:
         data = request.get_json()
-        project_id = data.get('projectId')
+        print("Received discard request data:", data)
         
-        if not project_id:
+        project_number = data.get('project_number')  # Changed from projectId
+        employee_id = data.get('employee_id')  # Changed from employeeId
+        
+        if not project_number or not employee_id:
+            print(f"Missing required fields. project_number: {project_number}, employee_id: {employee_id}")
             return jsonify({
                 'status': 'error',
-                'message': 'Project ID is required'
+                'message': 'Project number and employee ID are required'
             }), 400
 
-        result = processor.discard_update(project_id)
+        result = processor.discard_update(employee_id, project_number)
         
         if result:
             return jsonify({
@@ -67,11 +91,43 @@ def discard_update():
             }), 500
 
     except Exception as e:
+        print(f"Error in discard_update: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)
         }), 500
 
+@app.route('/save', methods=['POST'])
+def save_updates():
+    try:
+        data = request.get_json()
+        project_numbers = data.get('project_numbers', [])  # Changed from projectIds
+        employee_id = data.get('employee_id')  # Changed from employeeId
+        
+        if not project_numbers or not employee_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Project numbers and employee ID are required'
+            }), 400
+
+        result = processor.save_updates(employee_id, project_numbers)
+        
+        if result:
+            return jsonify({
+                'status': 'success',
+                'message': 'Updates saved successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to save updates'
+            }), 500
+
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)

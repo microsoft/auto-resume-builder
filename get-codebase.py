@@ -15,6 +15,8 @@ files = [
     'frontend/src/components/ResumeReview/ReviewScreen.js',
     'frontend/src/components/ResumeReview/SuccessScreen.js',
     'frontend/src/components/ResumeReview/api.js',
+    'frontend/src/components/ResumeReview/index.js',
+    'frontend/src/components/ResumeReview/ProjectCard.js',
     'frontend/src/App.js',
 
 ]
