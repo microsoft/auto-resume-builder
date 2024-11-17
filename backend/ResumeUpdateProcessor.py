@@ -398,6 +398,9 @@ class ResumeUpdateProcessor:
         
         Args:
             employee_id: Optional employee ID. If None, returns updates for all employees.
+            
+        Returns:
+            List[Dict]: List of pending resume update trackers
         """
         base_query = """
             SELECT *
@@ -419,31 +422,80 @@ class ResumeUpdateProcessor:
             partition_key="resumeupdatestatus"
         )
     
-    def discard_update(self, project_id: str) -> bool:
+    def save_updates(self, employee_id: str, project_numbers: List[str]) -> bool:
+        """
+        Save multiple resume updates, updating their status to 'yes'.
+        
+        Args:
+            employee_id: ID of the employee
+            project_numbers: List of project numbers to save
+            
+        Returns:
+            bool: True if all updates were saved successfully, False otherwise
+        """
+        try:
+            self.logger.info(f"Saving updates for employee {employee_id}, projects: {project_numbers}")
+            
+            for project_number in project_numbers:
+                # Create the tracker ID using the combination
+                tracker_id = f"{project_number}-{employee_id}"
+                
+                # Query the tracker
+                results = self.trackers_container.query_items(
+                    query="SELECT * FROM c WHERE c.id = @id",
+                    parameters=[{"name": "@id", "value": tracker_id}],
+                    partition_key="resumeupdatestatus"
+                )
+                
+                results_list = list(results)
+                if not results_list:
+                    self.logger.error(f"No tracker found with ID: {tracker_id}")
+                    continue
+                    
+                tracker = results_list[0]
+                
+                # For now, just update the tracker status
+                tracker['added_to_resume'] = 'yes'
+                tracker['last_updated'] = datetime.utcnow().isoformat()
+                tracker['version'] += 1
+                
+                # Save the updated tracker
+                self.trackers_container.update_item(tracker)
+                
+                self.logger.info(f"Successfully saved update for tracker: {tracker_id}")
+            
+            return True
+                
+        except Exception as e:
+            self.logger.error(f"Error saving updates: {str(e)}")
+            return False
+
+    def discard_update(self, employee_id: str, project_number: str) -> bool:
         """
         Discard a pending resume update by setting its status to 'discarded'.
         
         Args:
-            project_id: The ID of the resume tracker to discard
-            
+            employee_id: ID of the employee
+            project_number: Project number to discard
+                
         Returns:
             bool: True if successful, False otherwise
         """
         try:
+            # Create the tracker ID using the combination
+            tracker_id = f"{project_number}-{employee_id}"
+            self.logger.info(f"Discarding update for tracker ID: {tracker_id}")
+            
             # Query the tracker directly by ID
             results = self.trackers_container.query_items(
                 query="SELECT * FROM c WHERE c.id = @id",
-                parameters=[{"name": "@id", "value": project_id}],
+                parameters=[{"name": "@id", "value": tracker_id}],
                 partition_key="resumeupdatestatus"
             )
             
-            for result in results:
-                print(result)
-
-            # Convert results to list and get first item if it exists
             results_list = list(results)
             if not results_list:
-                self.logger.error(f"No tracker found with ID: {project_id}")
+                self.logger.error(f"No tracker found with ID: {tracker_id}")
                 return False
                 
             tracker = results_list[0]
@@ -456,7 +508,7 @@ class ResumeUpdateProcessor:
             # Save the updated tracker
             self.trackers_container.update_item(tracker)
             
-            self.logger.info(f"Successfully discarded update for tracker: {project_id}")
+            self.logger.info(f"Successfully discarded update for tracker: {tracker_id}")
             return True
             
         except Exception as e:
