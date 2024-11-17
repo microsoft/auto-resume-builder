@@ -1,4 +1,3 @@
-// src/components/ResumeReview/ReviewScreen.js
 import React from 'react';
 import { FileText, HelpCircle, X } from 'lucide-react';
 import ProjectCard from './ProjectCard';
