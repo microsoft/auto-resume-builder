@@ -61,3 +61,23 @@ export async function discardUpdate(employee_id, project_number) {
   
   return data;
 }
+
+// Add this to your existing api.js file
+
+export async function submitFeedback(feedbackData) {
+  const response = await fetch('http://localhost:5000/feedback', {
+      method: 'POST',
+      headers: {
+          'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(feedbackData)
+  });
+  
+  const data = await response.json();
+  
+  if (data.status !== 'success') {
+      throw new Error(data.message || 'Failed to submit feedback');
+  }
+  
+  return data;
+}

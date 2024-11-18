@@ -4,7 +4,14 @@ import ErrorScreen from './ErrorScreen';
 import ReviewScreen from './ReviewScreen';
 import SuccessScreen from './SuccessScreen';
 import EmptyScreen from './EmptyScreen';
-import { fetchPendingUpdates, getCurrentUser, saveUpdates, discardUpdate } from './api';
+import FeedbackFeature from './FeedbackFeature';
+import { 
+  fetchPendingUpdates, 
+  getCurrentUser, 
+  saveUpdates, 
+  discardUpdate,
+  submitFeedback 
+} from './api';
 
 const ResumeReview = () => {
   const [viewState, setViewState] = useState('review');
@@ -20,11 +27,8 @@ const ResumeReview = () => {
   const initialize = async () => {
     try {
       setIsLoading(true);
-      // First get the employee ID
       const userId = await getCurrentUser();
       setEmployeeId(userId);
-      
-      // Then load their pending updates
       await loadPendingUpdates();
     } catch (err) {
       setError('Failed to initialize application');
@@ -58,11 +62,7 @@ const ResumeReview = () => {
 
   const handleDiscard = async (project_number) => {
     try {
-      console.log('Discarding project:', project_number);
-      console.log('Employee ID:', employee_id);
-
       await discardUpdate(employee_id, project_number);
-      
       setResumeContent(prev => ({
         ...prev,
         projects: prev.projects.filter(p => p.project_number !== project_number)
@@ -73,35 +73,43 @@ const ResumeReview = () => {
     }
   };
 
+
+  const handleFeedbackSubmit = async (feedbackData) => {
+    try {
+      await submitFeedback(feedbackData);
+      // Optionally show a success message
+      // You could use a toast notification here
+      console.log('Feedback submitted successfully');
+    } catch (error) {
+      console.error('Error submitting feedback:', error);
+      // Optionally show an error message
+      throw error; // This will be caught by the FeedbackModal's error handling
+    }
+  };
+
   if (isLoading) return <LoadingScreen />;
   if (error) return <ErrorScreen message={error} />;
 
-  if (viewState === 'review' && resumeContent.projects.length === 0) {
-    return (
-      <div className="min-h-screen bg-gray-900 p-8">
-        <div className="max-w-4xl mx-auto">
+  return (
+    <div className="min-h-screen bg-gray-900 p-8 relative">
+      <div className="max-w-4xl mx-auto">
+        {viewState === 'review' && resumeContent.projects.length === 0 ? (
           <EmptyScreen />
-        </div>
-      </div>
-    );
-  }
-
-  const screens = {
-    review: <ReviewScreen 
+        ) : (
+          viewState === 'review' ? (
+            <ReviewScreen 
               projects={resumeContent.projects}
               onSave={handleSave}
               onDiscard={handleDiscard}
               onUpdateContent={(updatedProjects) => 
                 setResumeContent({ ...resumeContent, projects: updatedProjects })}
-            />,
-    success: <SuccessScreen />
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-900 p-8">
-      <div className="max-w-4xl mx-auto">
-        {screens[viewState]}
+            />
+          ) : (
+            <SuccessScreen />
+          )
+        )}
       </div>
+      <FeedbackFeature onSubmitFeedback={handleFeedbackSubmit} />
     </div>
   );
 };
