@@ -3,6 +3,10 @@ from typing import Dict, List
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
+from azure.search.documents import SearchClient
+from azure.search.documents.models import QueryType
+from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
 from azure.communication.email import EmailClient
@@ -30,6 +34,17 @@ class ResumeUpdateProcessor:
         connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
         self.email_client = EmailClient.from_connection_string(connection_string)
         
+        # Initialize OpenAI and Search clients
+        self.openai_client = AzureOpenAI(api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                                        api_version="2024-07-01-preview",
+                                        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"))
+        self.search_client_resumes = SearchClient(endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
+                                                  index_name=os.getenv("AZURE_SEARCH_INDEX_RESUMES"),
+                                                  credential=AzureKeyCredential(os.getenv("AZURE_SEARCH_KEY")))
+        self.search_client_projects = SearchClient(endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
+                                                   index_name=os.getenv("AZURE_SEARCH_INDEX_PROJECTS"),
+                                                   credential=AzureKeyCredential(os.getenv("AZURE_SEARCH_KEY")))
+    
     def process_key_member(self, member_entry: Dict) -> Dict:
         """Process an incoming key member entry."""
         try:
@@ -67,40 +82,28 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error processing key member entry: {str(e)}")
             raise
-
+    
     def _get_resume(self, employee_id: str) -> Dict:
-        """
-        Temporary implementation that returns a dummy resume.
-        Will be replaced with actual resume fetch logic later.
-        """
-        return {
-            "employee_id": employee_id,
-            "name": "John Doe",
-            "summary": "Experienced professional with background in project management",
-            "experience": [
-                {
-                    "company": "Previous Company",
-                    "role": "Senior Project Manager",
-                    "description": "Led multiple successful projects..."
-                }
-            ]
-        }
-
+        
+        results = self.search_client_resumes.search(
+            search_text=employee_id,
+            search_fields=['sourceFileName'],
+            select="id,date,jobTitle,experienceLevel,content,sourceFileName") #took out employee first and last name, not avail
+                
+        for result in results: 
+            return result
+        return {} #added fallback return statement if no results
+    
     def _get_project(self, project_number: str) -> Dict:
-        """
-        Temporary implementation that returns dummy project details.
-        Will be replaced with actual project fetch logic later.
-        """
-        return {
-            "project_number": project_number,
-            "name": "Strategic Initiative Project",
-            "description": "A large-scale digital transformation project focusing on modernizing core systems",
-            "start_date": "2024-01-01",
-            "status": "In Progress",
-            "industry": "Financial Services",
-            "technologies": ["Cloud", "API", "Microservices"]
-        }
-
+       
+        search_results = self.search_client_projects.search(
+            search_text="*",
+            filter=f"project_id eq '{project_number}'",
+            select="id,project_id,date,content,sourcefilename,sourcepage") 
+              
+        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+        return sorted_results
+    
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
         Temporary implementation that returns a placeholder project experience description.
@@ -227,13 +230,45 @@ class ResumeUpdateProcessor:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
 
+    def _is_project_on_resume(self, employee_id: str, project_number: str) -> bool:
+        # Get resume
+        resume = self._get_resume(employee_id)
+        
+        # Get project description
+        project = self._get_project(project_number)
+        
+        # Prepare the prompt for the LLM
+        prompt = f"Is the following project included in the resume?\n\nResume:\n{resume}\n\nProject Description:\n{project}"
+        
+        # Call the OpenAI model
+        response = self.openai_client.completions.create(
+                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"), # Needs to be a text completion model
+                        prompt=prompt,
+                        max_tokens=50
+                        )
+        
+        # Extract answer from the response
+        answer = response.choices[0].text.strip().lower()
+        
+        # Determine if the project is on the resume
+        return "yes" in answer
+        
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
         Returns True if hours >= 40 and status is 'no'
         """
-        return (tracker['total_hours'] >= 40 and 
-                tracker['added_to_resume'] == 'no')
+        #check if total_hours >=40 and added_to_resume == 'no'
+        if tracker['total_hours'] >= 40 and tracker['added_to_resume'] == 'no':
+            # Extract employee_id and project_number from the tracker
+            employee_id = tracker['employee_id']
+            project_number = tracker['project_number']
+        
+            # Run _is_project_on_resume() to check if the project is on the resume
+            if self._is_project_on_resume(employee_id, project_number):
+                return True
+        
+        return False           
 
     def _store_event(self, member_entry: Dict) -> Dict:
         """Store the key member entry in the events container."""
