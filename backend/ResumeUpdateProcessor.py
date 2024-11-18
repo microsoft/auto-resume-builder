@@ -87,16 +87,15 @@ class ResumeUpdateProcessor:
 
     def _get_project(self, project_number: str) -> Dict:
         search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
-                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX"),
                       credential=self.credential)
 
         search_results =  search_client.search(
             search_text="*" ,
-            filter="project_id eq '" + project_number + "'",
-            select="id, project_id, date, content, sourcefilename, sourcepage")
+            filter="project_number eq '" + project_number + "'",
+            select="id, project_number, document_updated, sourcepath, sourcefile, sourcepage")
         
         sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
-
         return sorted_results
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
