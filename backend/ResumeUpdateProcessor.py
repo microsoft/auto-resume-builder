@@ -5,7 +5,33 @@ from cosmosdb import CosmosDBManager
 import uuid
 from dotenv import load_dotenv
 import os
+from prompts import generate_work_experience_system_prompt
 from azure.communication.email import EmailClient
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents import SearchClient
+from langchain_openai import AzureChatOpenAI
+
+load_dotenv()
+
+# Azure OpenAI
+aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+aoai_key = os.getenv("AZURE_OPENAI_API_KEY")
+aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+#Azure AI Search
+credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
+
+primary_llm = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-05-01-preview",
+    temperature=0.75,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint
+)
 
 class ResumeUpdateProcessor:
     def __init__(self):
@@ -75,47 +101,48 @@ class ResumeUpdateProcessor:
             raise
 
     def _get_resume(self, employee_id: str) -> Dict:
-        """
-        Temporary implementation that returns a dummy resume.
-        Will be replaced with actual resume fetch logic later.
-        """
-        return {
-            "employee_id": employee_id,
-            "name": "John Doe",
-            "summary": "Experienced professional with background in project management",
-            "experience": [
-                {
-                    "company": "Previous Company",
-                    "role": "Senior Project Manager",
-                    "description": "Led multiple successful projects..."
-                }
-            ]
-        }
+        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
+                      credential=self.credential)
+
+        results =  search_client.search(
+            search_text=employee_id ,
+            search_fields=['sourceFileName'],
+            select="id, date, jobTitle, experienceLevel, content, sourceFileName")
+        
+        for result in results: 
+            return result
 
     def _get_project(self, project_number: str) -> Dict:
-        """
-        Temporary implementation that returns dummy project details.
-        Will be replaced with actual project fetch logic later.
-        """
-        return {
-            "project_number": project_number,
-            "name": "Strategic Initiative Project",
-            "description": "A large-scale digital transformation project focusing on modernizing core systems",
-            "start_date": "2024-01-01",
-            "status": "In Progress",
-            "industry": "Financial Services",
-            "technologies": ["Cloud", "API", "Microservices"]
-        }
+        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+                      credential=self.credential)
+
+        search_results =  search_client.search(
+            search_text="*" ,
+            filter="project_id eq '" + project_number + "'",
+            select="id, project_id, date, content, sourcefilename, sourcepage")
+        
+        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+
+        return sorted_results
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
-        Temporary implementation that returns a placeholder project experience description.
-        Will be replaced with LLM-based generation later.
+        Function for generating a project summary using the project data and resume data.
         """
-        return f"Served as {role_name} on {project_data['name']}, a {project_data['industry']} project. "\
-               f"Led initiatives in {', '.join(project_data['technologies'])} while driving "\
-               f"digital transformation efforts."
+        project_string = ""
+        for project in project_data:
+            project_string = project_string + project["content"]
 
+        #Prepare messages for LLM
+        work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
+        messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
+        messages.append({"role": "user", "content": work_experience_user_message})
+        #Invoke LLM
+        response = primary_llm.invoke(messages)
+
+        return response.content
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
