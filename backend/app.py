@@ -1,6 +1,6 @@
 # Standard library imports
 import os
-
+from datetime import datetime
 # Third-party imports
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
@@ -124,6 +124,36 @@ def save_updates():
             }), 500
 
     except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/feedback', methods=['POST'])
+def submit_feedback():
+    try:
+        data = request.get_json()
+        employee_id = get_current_user_id()
+        
+        # Add employee_id to feedback data
+        feedback_data = {
+            'type': data.get('type'),
+            'content': data.get('content'),
+            'employee_id': employee_id
+        }
+        
+        # Store feedback using the processor
+        stored_feedback = processor.store_feedback(feedback_data)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Feedback stored successfully',
+            'feedback_id': stored_feedback['id']
+        })
+
+    except Exception as e:
+        print(f"Error processing feedback: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)
