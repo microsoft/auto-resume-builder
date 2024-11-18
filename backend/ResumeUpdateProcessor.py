@@ -6,7 +6,6 @@ import uuid
 from dotenv import load_dotenv
 import os
 from prompts import generate_work_experience_system_prompt
-from azure.communication.email import EmailClient
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents import SearchClient
@@ -38,6 +37,7 @@ class ResumeUpdateProcessor:
         # Constants
         self.NOTIFICATION_COOLDOWN_HOURS = 0
         self.HOURS_THRESHOLD = 40
+        self.credential = credential
         
         self.events_container = CosmosDBManager(
             cosmos_database_id="ResumeAutomation",
@@ -58,8 +58,6 @@ class ResumeUpdateProcessor:
         self.logger = logging.getLogger(__name__)
         self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
         load_dotenv()
-        connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
-        self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
         
     def process_key_member(self, member_entry: Dict) -> Dict:
@@ -120,8 +118,8 @@ class ResumeUpdateProcessor:
 
         search_results =  search_client.search(
             search_text="*" ,
-            filter="project_id eq '" + project_number + "'",
-            select="id, project_id, date, content, sourcefilename, sourcepage")
+            filter="project_number eq '" + project_number + "'",
+            select="id, project_number, document_updated, content, sourcefile, sourcepage")
         
         sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
 
@@ -135,6 +133,7 @@ class ResumeUpdateProcessor:
         for project in project_data:
             project_string = project_string + project["content"]
 
+        print(resume)
         #Prepare messages for LLM
         work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
         messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
@@ -254,9 +253,7 @@ class ResumeUpdateProcessor:
                 }
             }
 
-            poller = self.email_client.begin_send(message)
-            result = poller.result()
-            self.logger.info(f"Email sent to {employee_email}: {result}")
+            self.logger.info(f"Email sent to {employee_email}")
             return True
 
         except Exception as e:
@@ -281,9 +278,11 @@ class ResumeUpdateProcessor:
     def _trigger_draft_creation(self, tracker: Dict) -> Dict:
         """Process resume update for the given tracker."""
         try:
+            print(tracker['employee_id'])
             # Get current resume
             resume = self._get_resume(tracker['employee_id'])
             
+            print(tracker['project_number'])
             # Get project details
             project = self._get_project(tracker['project_number'])
             

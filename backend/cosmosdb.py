@@ -32,21 +32,16 @@ class CosmosDBManager:
         self.cosmos_host = cosmos_host or os.environ.get("COSMOS_HOST")
         self.cosmos_database_id = cosmos_database_id or os.environ.get("COSMOS_DATABASE_ID")
         self.cosmos_container_id = cosmos_container_id or os.environ.get("COSMOS_CONTAINER_ID")
-        self.tenant_id = os.environ.get("TENANT_ID", '16b3c013-d300-468d-ac64-7eda0820b6d3')
 
         if not all([self.cosmos_host, self.cosmos_database_id, self.cosmos_container_id]):
             raise ValueError("Cosmos DB configuration is incomplete")
 
     def _get_cosmos_client(self) -> CosmosClient:
-        print("Initializing Cosmos DB client")
-        print("Using DefaultAzureCredential for Cosmos DB authentication")
-        credential = DefaultAzureCredential(
-            interactive_browser_tenant_id=self.tenant_id,
-            visual_studio_code_tenant_id=self.tenant_id,
-            workload_identity_tenant_id=self.tenant_id,
-            shared_cache_tenant_id=self.tenant_id
-        )
-        return CosmosClient(self.cosmos_host, credential=credential)
+        endpoint = os.environ.get("COSMOSDB_ENDPOINT")
+        key = os.environ.get("COSMOSDB_KEY")
+
+        connection_string = f"AccountEndpoint={endpoint};AccountKey={key};"
+        return CosmosClient.from_connection_string(connection_string)
 
     def _initialize_database_and_container(self) -> None:
         try:
