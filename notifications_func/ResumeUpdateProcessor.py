@@ -3,45 +3,15 @@ from typing import Dict, List, Any
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
-from azure.search.documents import SearchClient
-from azure.search.documents.models import QueryType
-from azure.core.credentials import AzureKeyCredential
-from openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
-from prompts import generate_work_experience_system_prompt
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents.indexes import SearchIndexClient
-from azure.search.documents import SearchClient
-from langchain_openai import AzureChatOpenAI
-
-load_dotenv()
-
-# Azure OpenAI
-aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-aoai_key = os.getenv("AZURE_OPENAI_API_KEY")
-aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-
-#Azure AI Search
-credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
-
-primary_llm = AzureChatOpenAI(
-    azure_deployment=aoai_deployment,
-    api_version="2024-05-01-preview",
-    temperature=0.75,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-    api_key=aoai_key,
-    azure_endpoint=aoai_endpoint
-)
+from azure.communication.email import EmailClient
 
 class ResumeUpdateProcessor:
     def __init__(self):
         # Constants
         self.NOTIFICATION_COOLDOWN_HOURS = 0
         self.HOURS_THRESHOLD = 40
-        self.credential = credential
         
         self.events_container = CosmosDBManager(
             cosmos_database_id="ResumeAutomation",
@@ -66,6 +36,8 @@ class ResumeUpdateProcessor:
         self.logger = logging.getLogger(__name__)
         self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
         load_dotenv()
+        connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
+        self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
         
     def process_key_member(self, member_entry: Dict) -> Dict:
@@ -105,49 +77,49 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error processing key member entry: {str(e)}")
             raise
-    
+
     def _get_resume(self, employee_id: str) -> Dict:
-        
-        results = self.search_client_resumes.search(
-            search_text=employee_id,
-            search_fields=['sourceFileName'],
-            select="id,date,jobTitle,experienceLevel,content,sourceFileName") #took out employee first and last name, not avail
-                
-        for result in results: 
-            return result
-        return {} #added fallback return statement if no results
-    
+        """
+        Temporary implementation that returns a dummy resume.
+        Will be replaced with actual resume fetch logic later.
+        """
+        return {
+            "employee_id": employee_id,
+            "name": "John Doe",
+            "summary": "Experienced professional with background in project management",
+            "experience": [
+                {
+                    "company": "Previous Company",
+                    "role": "Senior Project Manager",
+                    "description": "Led multiple successful projects..."
+                }
+            ]
+        }
+
     def _get_project(self, project_number: str) -> Dict:
-        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
-                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
-                      credential=self.credential)
-
-        search_results =  search_client.search(
-            search_text="*" ,
-            filter="project_number eq '" + project_number + "'",
-            select="id, project_number, document_updated, content, sourcefile, sourcepage")
-        
-        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
-
-        return sorted_results
+        """
+        Temporary implementation that returns dummy project details.
+        Will be replaced with actual project fetch logic later.
+        """
+        return {
+            "project_number": project_number,
+            "name": "Strategic Initiative Project",
+            "description": "A large-scale digital transformation project focusing on modernizing core systems",
+            "start_date": "2024-01-01",
+            "status": "In Progress",
+            "industry": "Financial Services",
+            "technologies": ["Cloud", "API", "Microservices"]
+        }
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
-        Function for generating a project summary using the project data and resume data.
+        Temporary implementation that returns a placeholder project experience description.
+        Will be replaced with LLM-based generation later.
         """
-        project_string = ""
-        for project in project_data:
-            project_string = project_string + project["content"]
+        return f"Served as {role_name} on {project_data['name']}, a {project_data['industry']} project. "\
+               f"Led initiatives in {', '.join(project_data['technologies'])} while driving "\
+               f"digital transformation efforts."
 
-        print(resume)
-        #Prepare messages for LLM
-        work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
-        messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
-        messages.append({"role": "user", "content": work_experience_user_message})
-        #Invoke LLM
-        response = primary_llm.invoke(messages)
-
-        return response.content
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
@@ -259,7 +231,9 @@ class ResumeUpdateProcessor:
                 }
             }
 
-            self.logger.info(f"Email sent to {employee_email}")
+            poller = self.email_client.begin_send(message)
+            result = poller.result()
+            self.logger.info(f"Email sent to {employee_email}: {result}")
             return True
 
         except Exception as e:
@@ -284,11 +258,9 @@ class ResumeUpdateProcessor:
     def _trigger_draft_creation(self, tracker: Dict) -> Dict:
         """Process resume update for the given tracker."""
         try:
-            print(tracker['employee_id'])
             # Get current resume
             resume = self._get_resume(tracker['employee_id'])
             
-            print(tracker['project_number'])
             # Get project details
             project = self._get_project(tracker['project_number'])
             
@@ -321,45 +293,13 @@ class ResumeUpdateProcessor:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
 
-    def _is_project_on_resume(self, employee_id: str, project_number: str) -> bool:
-        # Get resume
-        resume = self._get_resume(employee_id)
-        
-        # Get project description
-        project = self._get_project(project_number)
-        
-        # Prepare the prompt for the LLM
-        prompt = f"Is the following project included in the resume?\n\nResume:\n{resume}\n\nProject Description:\n{project}"
-        
-        # Call the OpenAI model
-        response = self.openai_client.completions.create(
-                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"), # Needs to be a text completion model
-                        prompt=prompt,
-                        max_tokens=50
-                        )
-        
-        # Extract answer from the response
-        answer = response.choices[0].text.strip().lower()
-        
-        # Determine if the project is on the resume
-        return "yes" in answer
-        
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
         Returns True if hours >= 40 and status is 'no'
         """
-        #check if total_hours >=40 and added_to_resume == 'no'
-        if tracker['total_hours'] >= 40 and tracker['added_to_resume'] == 'no':
-            # Extract employee_id and project_number from the tracker
-            employee_id = tracker['employee_id']
-            project_number = tracker['project_number']
-        
-            # Run _is_project_on_resume() to check if the project is on the resume
-            if self._is_project_on_resume(employee_id, project_number):
-                return True
-        
-        return False           
+        return (tracker['total_hours'] >= self.HOURS_THRESHOLD and 
+                tracker['added_to_resume'] == 'no')
 
     def _store_event(self, member_entry: Dict) -> Dict:
         """Store the key member entry in the events container."""
