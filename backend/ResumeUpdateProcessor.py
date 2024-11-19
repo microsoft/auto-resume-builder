@@ -55,6 +55,10 @@ class ResumeUpdateProcessor:
             cosmos_database_id="ResumeAutomation",
             cosmos_container_id="employee_metadata"
         )
+        self.feedback_container = CosmosDBManager(
+            cosmos_database_id="ResumeAutomation",
+            cosmos_container_id="feedback"
+        )
         self.logger = logging.getLogger(__name__)
         self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
         load_dotenv()
@@ -619,4 +623,36 @@ class ResumeUpdateProcessor:
             self.logger.error(f"Error checking notification eligibility: {str(e)}")
             return False
 
-    
+    def store_feedback(self, feedback_data: dict) -> dict:
+        """
+        Store feedback in the feedback container.
+        
+        Args:
+            feedback_data (dict): Dictionary containing feedback type and content
+            
+        Returns:
+            dict: The stored feedback document
+        """
+        try:
+            employee_id = feedback_data.get('employee_id')
+            
+            feedback_doc = {
+                "id": f"feedback-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{employee_id}",
+                "partitionKey": "AutoResumeUpdates",  # Fixed partition key as requested
+                "type": "feedback",
+                "feedback_type": feedback_data.get('type'),
+                "content": feedback_data.get('content'),
+                "employee_id": employee_id,
+                "created_timestamp": datetime.utcnow().isoformat(),
+                "status": "new"
+            }
+            
+            stored_feedback = self.feedback_container.create_item(feedback_doc)
+            self.logger.info(f"Stored feedback document with id: {stored_feedback['id']}")
+            
+            return stored_feedback
+            
+        except Exception as e:
+            self.logger.error(f"Error storing feedback: {str(e)}")
+            raise
+        
