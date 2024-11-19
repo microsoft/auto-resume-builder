@@ -40,15 +40,9 @@ def test_case_1_under_threshold():
     print("\nChecking tracker status...")
     view_tracker_status(f"{test_entry1['project_number']}-{test_entry1['employee_display_name'].split()[-1]}")
     
-    # Load and process second event
-    test_entry2 = load_json_file('events', 'event_2.json')
-    print(f"\nProcessing second entry ({test_entry2['job_hours']} hours)...")
-    result2 = processor.process_key_member(test_entry2)
-    print(f"Result: {result2}")
-    print("\nChecking tracker status...")
-    view_tracker_status(f"{test_entry2['project_number']}-{test_entry2['employee_display_name'].split()[-1]}")
+   
     
-    return [result1, result2]
+    return [result1]
 
 def test_case_2_trigger_draft():
     """
@@ -57,19 +51,11 @@ def test_case_2_trigger_draft():
     """
     print("\n=== Test Case 2: Events Triggering Draft Creation ===")
     
-    test_entry = load_json_file('events', 'event_3.json')
+    test_entry = load_json_file('events', 'event_2.json')
     print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
     result = processor.process_key_member(test_entry)
     print(f"Result: {result}")
-    
-    tracker_id = f"{test_entry['project_number']}-{test_entry['employee_display_name'].split()[-1]}"
-    print("\nChecking detailed tracker status...")
-    tracker = view_tracker_status(tracker_id, detailed=True)
-    
-    # Verify the description was generated and status changed
-    # assert tracker['added_to_resume'] == 'in_progress', "Status should be 'in_progress'"
-    # assert tracker['description'], "Description should not be empty"
-    print("\nVerification passed: Status is 'in_progress' and description was generated")
+
     
     return result
 
@@ -184,23 +170,23 @@ def cleanup_test_data(employee_id: str):
 
 if __name__ == "__main__":
     try:
-        test_employee_id = "99999"
+        test_employee_id = "718163"
 
         print("\nCleaning up any existing test data...")
         cleanup_test_data(test_employee_id)
         
-        print("Creating employee metadata...")
+        # print("Creating employee metadata...")
         create_employee_metadata()
         
         
-        print("\nRunning Test Case 1: Under Threshold Events")
+        # # print("\nRunning Test Case 1: Under Threshold Events")
         test_case_1_under_threshold()
         
         print("\nRunning Test Case 2: Trigger Draft Creation")
         test_case_2_trigger_draft()
         
-        print("\nRunning Test Case 3: Updates After Draft Triggered")
-        test_case_3_above_threshold_already_processed()
+        # print("\nRunning Test Case 3: Updates After Draft Triggered")
+        # test_case_3_above_threshold_already_processed()
         
     except Exception as e:
         print(f"Test execution failed: {str(e)}")

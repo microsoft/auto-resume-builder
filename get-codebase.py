@@ -1,28 +1,28 @@
 #Script to extract the codebase of a project and save it to a text file
 import os
 # Specify the directory containing the code files
-directory = 'C:/projects/auto-resume-builder/'
+directory = 'D:/projects/auto-resume-builder/'
 
 files = [
     'backend/ResumeUpdateProcessor.py',
-    'backend/cosmosdb.py',
+    #'backend/cosmosdb.py',
     'backend/testing.py',
     'backend/app.py',
     'backend/recurring_notifications.py',
-    'frontend/src/components/ResumeReview/EmptyScreen.js',
-    'frontend/src/components/ResumeReview/ErrorScreen.js',
-    'frontend/src/components/ResumeReview/LoadingScreen.js',
-    'frontend/src/components/ResumeReview/ReviewScreen.js',
-    'frontend/src/components/ResumeReview/SuccessScreen.js',
-    'frontend/src/components/ResumeReview/api.js',
-    'frontend/src/components/ResumeReview/index.js',
-    'frontend/src/components/ResumeReview/ProjectCard.js',
-    'frontend/src/App.js',
+    # 'frontend/src/components/ResumeReview/EmptyScreen.js',
+    # 'frontend/src/components/ResumeReview/ErrorScreen.js',
+    # 'frontend/src/components/ResumeReview/LoadingScreen.js',
+    # 'frontend/src/components/ResumeReview/ReviewScreen.js',
+    # 'frontend/src/components/ResumeReview/SuccessScreen.js',
+    # 'frontend/src/components/ResumeReview/api.js',
+    # 'frontend/src/components/ResumeReview/index.js',
+    # 'frontend/src/components/ResumeReview/ProjectCard.js',
+    # 'frontend/src/App.js',
 
 ]
 
 # Specify the output file path
-output_file = 'C:/temp/tmp_codebase/codebase.txt'
+output_file = 'D:/temp/tmp_codebase/codebase.txt'
 
 # Open the output file in write mode
 with open(output_file, 'w') as f:
