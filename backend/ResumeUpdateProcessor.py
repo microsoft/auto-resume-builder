@@ -3,6 +3,10 @@ from typing import Dict, List, Any
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
+from azure.search.documents import SearchClient
+from azure.search.documents.models import QueryType
+from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
 from prompts import generate_work_experience_system_prompt
@@ -101,20 +105,18 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error processing key member entry: {str(e)}")
             raise
-
+    
     def _get_resume(self, employee_id: str) -> Dict:
-        search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
-                      index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
-                      credential=self.credential)
-
-        results =  search_client.search(
-            search_text=employee_id ,
-            search_fields=['sourceFileName'],
-            select="id, date, jobTitle, experienceLevel, content, sourceFileName")
         
+        results = self.search_client_resumes.search(
+            search_text=employee_id,
+            search_fields=['sourceFileName'],
+            select="id,date,jobTitle,experienceLevel,content,sourceFileName") #took out employee first and last name, not avail
+                
         for result in results: 
             return result
-
+        return {} #added fallback return statement if no results
+    
     def _get_project(self, project_number: str) -> Dict:
         search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
                       index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
@@ -319,13 +321,45 @@ class ResumeUpdateProcessor:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
 
+    def _is_project_on_resume(self, employee_id: str, project_number: str) -> bool:
+        # Get resume
+        resume = self._get_resume(employee_id)
+        
+        # Get project description
+        project = self._get_project(project_number)
+        
+        # Prepare the prompt for the LLM
+        prompt = f"Is the following project included in the resume?\n\nResume:\n{resume}\n\nProject Description:\n{project}"
+        
+        # Call the OpenAI model
+        response = self.openai_client.completions.create(
+                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"), # Needs to be a text completion model
+                        prompt=prompt,
+                        max_tokens=50
+                        )
+        
+        # Extract answer from the response
+        answer = response.choices[0].text.strip().lower()
+        
+        # Determine if the project is on the resume
+        return "yes" in answer
+        
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
         Returns True if hours >= 40 and status is 'no'
         """
-        return (tracker['total_hours'] >= self.HOURS_THRESHOLD and 
-                tracker['added_to_resume'] == 'no')
+        #check if total_hours >=40 and added_to_resume == 'no'
+        if tracker['total_hours'] >= 40 and tracker['added_to_resume'] == 'no':
+            # Extract employee_id and project_number from the tracker
+            employee_id = tracker['employee_id']
+            project_number = tracker['project_number']
+        
+            # Run _is_project_on_resume() to check if the project is on the resume
+            if self._is_project_on_resume(employee_id, project_number):
+                return True
+        
+        return False           
 
     def _store_event(self, member_entry: Dict) -> Dict:
         """Store the key member entry in the events container."""
