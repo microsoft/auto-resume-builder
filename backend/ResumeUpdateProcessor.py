@@ -3,15 +3,60 @@ from typing import Dict, List, Any
 import logging
 from cosmosdb import CosmosDBManager
 import uuid
+from azure.search.documents import SearchClient
+from azure.search.documents.models import QueryType
+from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
-from azure.communication.email import EmailClient
+from prompts import generate_work_experience_system_prompt
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents import SearchClient
+from langchain_openai import AzureChatOpenAI
+from azure.communication.email import EmailClient  # Added back
+
+load_dotenv()
+
+# Azure OpenAI
+aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+aoai_key = os.getenv("AZURE_OPENAI_API_KEY")
+aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+#Azure AI Search
+credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
+
+primary_llm = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-05-01-preview",
+    temperature=0.75,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint
+)
+
 
 class ResumeUpdateProcessor:
     def __init__(self):
         # Constants
         self.NOTIFICATION_COOLDOWN_HOURS = 0
         self.HOURS_THRESHOLD = 40
+        self.credential = credential
+        
+        # Initialize Azure AI Search clients
+        self.search_client_resumes = SearchClient(
+            endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
+            index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
+            credential=self.credential
+        )
+        
+        self.search_client_projects = SearchClient(
+            endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
+            index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+            credential=self.credential
+        )
         
         self.events_container = CosmosDBManager(
             cosmos_database_id="ResumeAutomation",
@@ -35,7 +80,8 @@ class ResumeUpdateProcessor:
         )
         self.logger = logging.getLogger(__name__)
         self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
-        load_dotenv()
+        
+        # Initialize Email Client
         connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
         self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
@@ -44,6 +90,7 @@ class ResumeUpdateProcessor:
         """Process an incoming key member entry."""
         try:
             # 1. Store the event
+            
             stored_event = self._store_event(member_entry)
             
             # 2. Get or create resume tracker
@@ -79,47 +126,51 @@ class ResumeUpdateProcessor:
             raise
 
     def _get_resume(self, employee_id: str) -> Dict:
-        """
-        Temporary implementation that returns a dummy resume.
-        Will be replaced with actual resume fetch logic later.
-        """
-        return {
-            "employee_id": employee_id,
-            "name": "John Doe",
-            "summary": "Experienced professional with background in project management",
-            "experience": [
-                {
-                    "company": "Previous Company",
-                    "role": "Senior Project Manager",
-                    "description": "Led multiple successful projects..."
-                }
-            ]
-        }
-
+        """Get the resume for the given employee ID."""
+        print("Getting resume for employee_id: ", employee_id)
+        results = self.search_client_resumes.search(
+            search_text=employee_id,
+            search_fields=['sourceFileName'],
+            select="id,jobTitle,experienceLevel,content,sourceFileName"
+        )
+                
+        for result in results:
+            #check if sourceFileName contains employee_id
+            print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
+            if employee_id in result['sourceFileName']:
+                return result
+        return {}  # added fallback return statement if no results
+    
     def _get_project(self, project_number: str) -> Dict:
-        """
-        Temporary implementation that returns dummy project details.
-        Will be replaced with actual project fetch logic later.
-        """
-        return {
-            "project_number": project_number,
-            "name": "Strategic Initiative Project",
-            "description": "A large-scale digital transformation project focusing on modernizing core systems",
-            "start_date": "2024-01-01",
-            "status": "In Progress",
-            "industry": "Financial Services",
-            "technologies": ["Cloud", "API", "Microservices"]
-        }
+        search_results = self.search_client_projects.search(
+            search_text="*",
+            filter="project_number eq '" + project_number + "'",
+            select="id, project_number, content, sourcefilename, sourcepage"
+        )
+        
+        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+        return sorted_results
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
-        Temporary implementation that returns a placeholder project experience description.
-        Will be replaced with LLM-based generation later.
+        Function for generating a project summary using the project data and resume data.
         """
-        return f"Served as {role_name} on {project_data['name']}, a {project_data['industry']} project. "\
-               f"Led initiatives in {', '.join(project_data['technologies'])} while driving "\
-               f"digital transformation efforts."
+        print("Generating project work experience...")
 
+        project_string = ""
+        for project in project_data:
+            project_string = project_string + project["content"]
+
+        
+        #Prepare messages for LLM
+        work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
+        messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
+        messages.append({"role": "user", "content": work_experience_user_message})
+        #Invoke LLM
+        response = primary_llm.invoke(messages)
+        print("New Work Experience: ", response.content)
+
+        return response.content
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
@@ -241,19 +292,107 @@ class ResumeUpdateProcessor:
             return False
 
     def _update_notification_record(self, employee_id: str) -> Dict:
-        """Update notification record with latest notification time."""
+        """Update notification record with latest notification time or create it if it doesn't exist."""
         try:
-            notification = {
-                "id": f"notification-{employee_id}",
-                "partitionKey": "notifications",
-                "employee_id": employee_id,
-                "last_notification": datetime.utcnow().isoformat()
-            }
-            return self.notification_container.update_item(notification)
+            notification_id = f"notification-{employee_id}"
+            partition_key = "notifications"
+            
+            # Check if the notification record exists
+            existing_notifications = self.notification_container.query_items(
+                query="SELECT * FROM c WHERE c.id = @id",
+                parameters=[{"name": "@id", "value": notification_id}],
+                partition_key=partition_key
+            )
+            
+            if existing_notifications:
+                notification = existing_notifications[0]
+                notification['last_notification'] = datetime.utcnow().isoformat()
+                return self.notification_container.update_item(notification)
+            else:
+                # Create new notification record
+                notification = {
+                    "id": notification_id,
+                    "partitionKey": partition_key,
+                    "employee_id": employee_id,
+                    "last_notification": datetime.utcnow().isoformat()
+                }
+                return self.notification_container.create_item(notification)
 
         except Exception as e:
             self.logger.error(f"Error updating notification record: {str(e)}")
             raise
+        
+    def _is_project_on_resume(self, employee_id: str, project_number: str) -> bool:
+        """
+        Check if a project is already included in the resume using LLM analysis.
+        
+        Args:
+            employee_id: ID of the employee
+            project_number: Project number to check
+            
+        Returns:
+            bool: True if project is found in resume, False otherwise
+        """
+        try:
+            # Get resume
+            resume = self._get_resume(employee_id)
+            if not resume:
+                self.logger.warning(f"No resume found for employee {employee_id}")
+                return False
+                
+            # Get project description
+            project_data = self._get_project(project_number)
+            if not project_data:
+                self.logger.warning(f"No project data found for project {project_number}")
+                return False
+                
+            # Concatenate project content like in _generate_project_experience
+            project_string = ""
+            for project in project_data:
+                project_string = project_string + project["content"]
+            
+            # Prepare system prompt
+            system_prompt = """You are an expert resume analyst. Your task is to determine if a specific project is already mentioned 
+            in a resume. Analyze the content carefully and consider that the same project might be described using different words or 
+            phrases. Look for matching:
+            - Project descriptions
+            - Key responsibilities
+            - Technologies used
+            - Time periods
+            - Project outcomes
+            
+            Respond with only "yes" if you are confident the project is already included in the resume, or "no" if it is not included 
+            or if you are unsure. Do not provide any other explanation or commentary."""
+            
+            # Prepare user message
+            user_message = f"""Please analyze if this project is already included in the resume:
+
+            RESUME CONTENT:
+            {resume.get('content', '')}
+            
+            PROJECT DESCRIPTION:
+            {project_string}
+            
+            Is this project already included in the resume? Answer only 'yes' or 'no'."""
+            
+            # Prepare messages for LLM
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # Call LLM
+            response = primary_llm.invoke(messages)
+            
+            # Extract answer and convert to boolean
+            answer = response.content.strip().lower()
+            self.logger.info(f"LLM response for project inclusion check: {answer}")
+            
+            return answer == "yes"
+            
+        except Exception as e:
+            self.logger.error(f"Error checking if project is on resume: {str(e)}")
+            return False
 
     def _trigger_draft_creation(self, tracker: Dict) -> Dict:
         """Process resume update for the given tracker."""
@@ -292,14 +431,29 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
-
+    
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
         Returns True if hours >= 40 and status is 'no'
         """
-        return (tracker['total_hours'] >= self.HOURS_THRESHOLD and 
-                tracker['added_to_resume'] == 'no')
+        #check if total_hours >=40 and added_to_resume == 'no'
+        print("Checking if we should trigger update...")
+        if tracker['total_hours'] >= 40 and tracker['added_to_resume'] == 'no':
+            # Extract employee_id and project_number from the tracker
+            employee_id = tracker['employee_id']
+            project_number = tracker['project_number']
+            print("Hours > 40 and added_to_resume='no'. Checking if project is on resume...")
+            # Run _is_project_on_resume() to check if the project is on the resume
+            if self._is_project_on_resume(employee_id, project_number):
+                #Set added_to_resume to 'yes' and return False
+
+
+                return False
+        
+            return True
+
+        return False  
 
     def _store_event(self, member_entry: Dict) -> Dict:
         """Store the key member entry in the events container."""
@@ -319,6 +473,7 @@ class ResumeUpdateProcessor:
             "employee_job_family_function_code": member_entry['employee_job_family_function_code'],
             "timestamp": datetime.utcnow().isoformat()
         }
+        print(f'Storing event for Employee_id={employee_id} and project_number={member_entry["project_number"]}')
         return self.events_container.create_item(event_doc)
 
     def _get_or_create_tracker(self, member_entry: Dict) -> Dict:

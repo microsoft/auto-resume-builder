@@ -49,7 +49,7 @@ def create_index():
 
     fields = [
         SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
-        SimpleField(name="project_id", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="project_number", type=SearchFieldDataType.String, filterable=True),
         SimpleField(name="date", type=SearchFieldDataType.DateTimeOffset, filterable=True, facetable=True),
         SearchableField(name="content", type=SearchFieldDataType.String),
         SearchableField(name="sourcefilename", type=SearchFieldDataType.String, filterable=True),
@@ -78,14 +78,16 @@ def chunk_text(text: str, chunk_size: int = 250) -> List[str]:
     
     return chunks
 
-def generate_project_id(file_path):
-    """Generate a unique, deterministic ID for a project."""
+def generate_project_number(file_path):
+    """Generate a unique, deterministic 6-digit number for a project."""
     unique_string = f"{file_path}"
-    return hashlib.md5(unique_string.encode()).hexdigest()
+    hash_value = hashlib.md5(unique_string.encode()).hexdigest()
+    numeric_value = int(hash_value, 16) % 1000000  # Convert to a 6-digit number
+    return f"{numeric_value:06d}" 
 
-def generate_page_id(project_id: str, page_number: int):
+def generate_page_id(project_number: str, page_number: int):
     """Generate a unique ID for each page."""
-    return f"{project_id}-page-{page_number}"
+    return f"{project_number}-page-{page_number}"
 
 def populate_index():
     print("Populating index...")
@@ -97,9 +99,9 @@ def populate_index():
         print(f"Processing {file_path}")
         
         try:
-            # Read the full text and generate project ID
+            # Read the full text and generate project number
             full_text = read_text_file(file_path)
-            project_id = generate_project_id(file_path)
+            project_number = generate_project_number(file_path)
             fileName = os.path.basename(file_path)
             current_date = datetime.now(timezone.utc).isoformat()
             
@@ -110,11 +112,11 @@ def populate_index():
             # Process each chunk as a page
             documents = []
             for page_number, page_content in enumerate(chunks, start=1):  # Start page numbers at 1
-                page_id = generate_page_id(project_id, page_number)
+                page_id = generate_page_id(project_number, page_number)
                 
                 document = {
                     "id": page_id,
-                    "project_id": project_id,
+                    "project_number": project_number,
                     "date": current_date,
                     "content": page_content,
                     "sourcefilename": fileName,
