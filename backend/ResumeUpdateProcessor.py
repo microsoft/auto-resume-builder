@@ -10,6 +10,9 @@ from openai import AzureOpenAI
 from dotenv import load_dotenv
 import os
 from azure.communication.email import EmailClient
+import openai
+from openai import OpenAI
+from openai import AzureOpenAI
 
 class ResumeUpdateProcessor:
     def __init__(self):
@@ -36,8 +39,8 @@ class ResumeUpdateProcessor:
         
         # Initialize OpenAI and Search clients
         self.openai_client = AzureOpenAI(api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                                        api_version="2024-07-01-preview",
-                                        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"))
+                                         api_version="2024-07-01-preview",
+                                         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"))
         self.search_client_resumes = SearchClient(endpoint=os.getenv("AZURE_SEARCH_ENDPOINT"),
                                                   index_name=os.getenv("AZURE_SEARCH_INDEX_RESUMES"),
                                                   credential=AzureKeyCredential(os.getenv("AZURE_SEARCH_KEY")))
@@ -93,15 +96,27 @@ class ResumeUpdateProcessor:
         for result in results: 
             return result
         return {} #added fallback return statement if no results
-    
-    def _get_project(self, project_number: str) -> Dict:
+      
+    #Note: THIS CODE SHOULD RUN ON CDM SIDE, BUT WILL NOT RUN ON MSFT SIDE BC WE HAVE DIFFERENT SCHEMA IN SEARCH INDEX
+    # def _get_project(self, project_number: str) -> Dict:
+    #     search_results =  self.search_client_projects.search(
+    #         search_text="*" ,
+    #         filter="project_number eq '" + project_number + "'",
+    #         select="id, project_number, document_updated, content, sourcefile, sourcepage")
        
-        search_results = self.search_client_projects.search(
-            search_text="*",
-            filter=f"project_id eq '{project_number}'",
-            select="id,project_id,date,content,sourcefilename,sourcepage") 
-              
+    #     sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+ 
+    #     return sorted_results
+    
+    #Note: THIS CODE SHOULD RUN ON MSFT SIDE, BUT WILL NOT RUN ON CDM SIDE BC WE HAVE DIFFERENT SCHEMA IN SEARCH INDEX
+    def _get_project(self, project_number: str) -> Dict:
+        search_results =  self.search_client_projects.search(
+            search_text="*" ,
+            filter=f"project_number eq '{project_number}'",
+            select="id, project_number, content, sourcefilename, sourcepage")
+
         sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+ 
         return sorted_results
     
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
@@ -229,7 +244,7 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
-
+    
     def _is_project_on_resume(self, employee_id: str, project_number: str) -> bool:
         # Get resume
         resume = self._get_resume(employee_id)
@@ -241,18 +256,21 @@ class ResumeUpdateProcessor:
         prompt = f"Is the following project included in the resume?\n\nResume:\n{resume}\n\nProject Description:\n{project}"
         
         # Call the OpenAI model
-        response = self.openai_client.completions.create(
-                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"), # Needs to be a text completion model
-                        prompt=prompt,
+        response = self.openai_client.chat.completions.create(
+                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"), #using GPT-4o
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant."},
+                            {"role": "user", "content": prompt}
+                        ],                        
                         max_tokens=50
                         )
-        
+
         # Extract answer from the response
-        answer = response.choices[0].text.strip().lower()
-        
+        answer = response.choices[0].message.content.strip().lower()
+                    
         # Determine if the project is on the resume
-        return "yes" in answer
-        
+        return "yes" in answer.lower()
+          
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
