@@ -1,8 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, CircleDashed } from 'lucide-react';
 
 const ProjectCard = ({ project, onDiscard, onChange }) => {
   const [isDiscarding, setIsDiscarding] = useState(false);
+  const textareaRef = useRef(null);
+
+  // Auto-resize textarea on content change
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  }, [project.content]);
 
   const handleDiscard = async () => {
     try {
@@ -45,10 +55,14 @@ const ProjectCard = ({ project, onDiscard, onChange }) => {
       </div>
 
       <textarea
+        ref={textareaRef}
         value={project.content}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full h-32 bg-gray-800 text-gray-100 p-3 rounded 
-                   focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        onChange={(e) => {
+          onChange(e.target.value);
+          // Height will be adjusted by useEffect
+        }}
+        className="w-full min-h-32 bg-gray-800 text-gray-100 p-3 rounded resize-none
+                   focus:ring-2 focus:ring-blue-500 focus:outline-none overflow-hidden"
         placeholder="Project description..."
       />
     </div>

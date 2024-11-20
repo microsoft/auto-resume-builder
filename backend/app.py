@@ -159,5 +159,64 @@ def submit_feedback():
             'message': str(e)
         }), 500
 
+# Add to backend/app.py
+
+
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+from flask import send_file
+import io
+
+@app.route('/tips-pdf', methods=['GET'])
+def get_tips_pdf():
+    try:
+        # Retrieve environment variables once
+        connection_string = os.environ.get('STORAGE_ACCOUNT_CONNECTION_STRING')
+        storage_account_name = os.environ.get('STORAGE_ACCOUNT_NAME')
+        print("Storage account name:", storage_account_name)
+        
+        if connection_string:
+            try:
+                blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            except Exception as e:
+                print(f"Connection string auth failed, falling back to DefaultAzureCredential: {str(e)}")
+                # Fall back to DefaultAzureCredential
+                account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                credential = DefaultAzureCredential()
+                blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        else:
+            # Directly use DefaultAzureCredential
+            print("Using DefaultAzureCredential")
+            account_url = f"https://{storage_account_name}.blob.core.windows.net"
+            credential = DefaultAzureCredential()
+            blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        
+        # Get container client
+        container_client = blob_service_client.get_container_client("resumes")
+        
+        # Get blob client
+        blob_client = container_client.get_blob_client("docs/Resume Guidance.pdf")
+        
+        # Download blob
+        download_stream = blob_client.download_blob()
+        file_content = download_stream.readall()
+        
+        # Create BytesIO object
+        file_stream = io.BytesIO(file_content)
+        file_stream.seek(0)
+        
+        return send_file(
+            file_stream,
+            mimetype='application/pdf',
+            as_attachment=False,
+            download_name='resume_tips.pdf'
+        )
+
+    except Exception as e:
+        print(f"Error serving PDF: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Could not retrieve PDF'
+        }), 500
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)
