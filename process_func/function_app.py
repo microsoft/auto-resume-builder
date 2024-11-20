@@ -1,9 +1,15 @@
-import azure.functions as func
+"""
+This module is the main entry point for the Azure Function app. 
+It contains the function that is triggered by a new blob being uploaded to the storage account. 
+The function reads the blob content, processes it using the ResumeUpdateProcessor class, 
+and prints the result. 
+It also checks the status of the tracker for the employee and project mentioned in the blob data.
+"""
 import logging
-from ResumeUpdateProcessor import ResumeUpdateProcessor
 from pprint import pprint
 import json
-import os
+import azure.functions as func
+from ResumeUpdateProcessor import ResumeUpdateProcessor
 
 # Create single processor instance to be used across all tests
 processor = ResumeUpdateProcessor()
@@ -11,30 +17,24 @@ processor = ResumeUpdateProcessor()
 app = func.FunctionApp()
 
 @app.blob_trigger(arg_name="myblob", path="cdmsmithcodewith",
-                               connection="cdmsmithcodewith8e65_STORAGE") 
+                               connection="cdmsmithcodewith8e65_STORAGE")
 def auto_resume_blob_trigger(myblob: func.InputStream):
 
-
+    if myblob is not None:
     # Read file content from blob storage
-    blob_content = myblob.read()
-    
+        blob_content = myblob.read()
     # Assuming the blob content is JSON, parse it
-    blob_data = json.loads(blob_content)
+        blob_data = json.loads(blob_content)
+        result1 = processor.process_key_member(blob_data)
 
-    result1 = processor.process_key_member(blob_data)
+        # Print the result
 
-
-
-    # Print the result
-
-    # You don't need to print the result in production, but it's useful for debugging
-    print(f"Result: {result1}")
-    print("\nChecking tracker status...")
-    view_tracker_status(f"{blob_data['project_number']}-{blob_data['employee_display_name'].split()[-1]}")
+        # You don't need to print the result in production, but it's useful for debugging
+        print(f"Result: {result1}")
+        print("\nChecking tracker status...")
+        view_tracker_status(f"{blob_data['project_number']}-{blob_data['employee_display_name'].split()[-1]}")
     
-    logging.info(f"Python blob trigger function processed blob"
-                f"Name: {myblob.name}"
-                f"Blob Size: {myblob.length} bytes")
+        logging.info("Python blob trigger function processed blob Name: %s Blob Size: %d bytes", myblob.name, myblob.length)
 
 def view_tracker_status(tracker_id: str, detailed=False):
     """Helper function to view current tracker status"""

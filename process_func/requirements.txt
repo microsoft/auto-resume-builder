@@ -3,3 +3,8 @@
 # Manually managing azure-functions-worker may cause unexpected issues
 
 azure-functions
+azurefunctions-extensions-bindings-blob
+python-dotenv
+azure-cosmos
+azure-identity
+azure-communication-email
