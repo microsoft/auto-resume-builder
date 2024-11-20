@@ -127,29 +127,39 @@ class ResumeUpdateProcessor:
 
     def _get_resume(self, employee_id: str) -> Dict:
         """Get the resume for the given employee ID."""
-        print("Getting resume for employee_id: ", employee_id)
-        results = self.search_client_resumes.search(
+        try:
+            self.logger.info("Getting resume for employee_id: ", employee_id)
+            results = self.search_client_resumes.search(
             search_text=employee_id,
             search_fields=['sourceFileName'],
             select="id,jobTitle,experienceLevel,content,sourceFileName"
         )
                 
-        for result in results:
-            #check if sourceFileName contains employee_id
-            print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
-            if employee_id in result['sourceFileName']:
-                return result
-        return {}  # added fallback return statement if no results
+            for result in results:
+                #check if sourceFileName contains employee_id
+                print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
+                if employee_id in result['sourceFileName']:
+                    return result
+        except Exception as e:  
+            self.logger.error(f"Error getting project: {str(e)}")
+            return {}
     
     def _get_project(self, project_number: str) -> Dict:
-        search_results = self.search_client_projects.search(
-            search_text="*",
-            filter="project_number eq '" + project_number + "'",
-            select="id, project_number, content, sourcefilename, sourcepage"
-        )
-        
-        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
-        return sorted_results
+        try:
+            search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+                      credential=self.credential)
+            search_results =  search_client.search(
+                search_text="*" ,
+                top=50,
+                filter="project_number eq '" + project_number + "'",
+                select="id, project_number, document_updated, content, sourcefile, sourcepage")
+            
+            sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+            return sorted_results
+        except Exception as e:  
+            self.logger.error(f"Error getting project: {str(e)}")
+            return {}
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
         """
@@ -383,11 +393,9 @@ class ResumeUpdateProcessor:
             
             # Call LLM
             response = primary_llm.invoke(messages)
-            
             # Extract answer and convert to boolean
             answer = response.content.strip().lower()
             self.logger.info(f"LLM response for project inclusion check: {answer}")
-            
             return answer == "yes"
             
         except Exception as e:
@@ -438,6 +446,7 @@ class ResumeUpdateProcessor:
         Returns True if hours >= 40 and status is 'no'
         """
         #check if total_hours >=40 and added_to_resume == 'no'
+
         print("Checking if we should trigger update...")
         if tracker['total_hours'] >= 40 and tracker['added_to_resume'] == 'no':
             # Extract employee_id and project_number from the tracker
@@ -447,8 +456,7 @@ class ResumeUpdateProcessor:
             # Run _is_project_on_resume() to check if the project is on the resume
             if self._is_project_on_resume(employee_id, project_number):
                 #Set added_to_resume to 'yes' and return False
-
-
+                tracker['added_to_resume']='yes'	
                 return False
         
             return True
