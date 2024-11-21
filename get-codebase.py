@@ -13,12 +13,15 @@ files = [
     'frontend/src/components/ResumeReview/ErrorScreen.js',
     'frontend/src/components/ResumeReview/LoadingScreen.js',
     'frontend/src/components/ResumeReview/ReviewScreen.js',
+    'frontend/src/components/ResumeReview/ReviewChecklist.js',
     'frontend/src/components/ResumeReview/SuccessScreen.js',
     'frontend/src/components/ResumeReview/api.js',
     'frontend/src/components/ResumeReview/index.js',
     'frontend/src/components/ResumeReview/ProjectCard.js',
     'frontend/src/App.js',
     'frontend/src/components/ResumeReview/Header.js'
+    'frontend/src/components/ResumeReview/FeedbackFeature.js',
+
 
 ]
 
