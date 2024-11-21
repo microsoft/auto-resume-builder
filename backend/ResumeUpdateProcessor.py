@@ -293,7 +293,7 @@ class ResumeUpdateProcessor:
 
         return result_json['start_phrase']
 
-    def _save_new_project(self, doc: Document, new_project: dict, insert_phrase: str):
+    def _save_new_project(self, doc: Document, new_project: str, insert_phrase: str):
         json_project = json.loads(new_project)
         for para in doc.paragraphs:
             if insert_phrase in para.text:
@@ -324,7 +324,7 @@ class ResumeUpdateProcessor:
         result = search_client.upload_documents(documents=[resume])
         return True
 
-    def _update_resume(self, resume_name: str, generated_work_exp: dict, resume: dict):
+    def _update_resume(self, resume_name: str, generated_work_exp: str, resume: dict):
         
         print(f"Enhancing resume {resume_name}")
         #print(f'Search query found: {search_query}\n')
