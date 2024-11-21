@@ -56,6 +56,15 @@ def test_case_2_trigger_draft():
     result = processor.process_key_member(test_entry)
     print(f"Result: {result}")
 
+    test_entry = load_json_file('events', 'event_3.json')
+    print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
+    result = processor.process_key_member(test_entry)
+    print(f"Result: {result}")
+
+    test_entry = load_json_file('events', 'event_5.json')
+    print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
+    result = processor.process_key_member(test_entry)
+    print(f"Result: {result}")
     
     return result
 
@@ -186,7 +195,7 @@ if __name__ == "__main__":
         test_case_2_trigger_draft()
         
         # print("\nRunning Test Case 3: Updates After Draft Triggered")
-        # test_case_3_above_threshold_already_processed()
+        test_case_3_above_threshold_already_processed()
         
     except Exception as e:
         print(f"Test execution failed: {str(e)}")

@@ -49,7 +49,7 @@ def get_pending_updates():
     for update in pending_updates:
         formatted_updates.append({
             'id': update['id'],
-            'name': update.get('subject_area', 'Unknown Project'),
+            'name': update.get('project_name', 'Unknown Project'),
             'project_number': update['project_number'],  # Changed from code to project_number
             'content': update.get('description', ''),
             'total_hours': update.get('total_hours', 0),

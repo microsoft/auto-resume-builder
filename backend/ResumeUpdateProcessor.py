@@ -16,6 +16,10 @@ from azure.search.documents import SearchClient
 from langchain_openai import AzureChatOpenAI
 from azure.communication.email import EmailClient  # Added back
 
+from pydantic import BaseModel
+
+
+
 load_dotenv()
 
 # Azure OpenAI
@@ -37,6 +41,58 @@ primary_llm = AzureChatOpenAI(
     azure_endpoint=aoai_endpoint
 )
 
+API_VERSION = "2024-08-01-preview"
+
+# Initialize Azure OpenAI client
+try:
+    aoai_client = AzureOpenAI(
+        azure_endpoint=aoai_endpoint,
+        api_key=aoai_key,
+        api_version=API_VERSION
+    )
+except Exception as e:
+    print(f"Failed to initialize Azure OpenAI client: {e}")
+    raise
+
+from typing import List, Dict, Optional, Union
+def inference_structured_output_aoai(messages: List[Dict[str, Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]]], deployment: str, schema: BaseModel) -> dict:
+    """
+    Perform an inference task with structured output using Azure OpenAI.
+
+    Parameters:
+    - messages (List[Dict]): A list of message dictionaries. Each dictionary should have a 'role' key
+      (either 'system', 'user', or 'assistant') and a 'content' key. The 'content' can be either a string
+      for text-only messages or a list of dictionaries for messages that include images.
+    - deployment (str): The name of the Azure OpenAI deployment to use.
+    - schema (BaseModel): A Pydantic model that defines the structure of the expected output.
+
+    Returns:
+    - dict: The parsed response from Azure OpenAI, or None if an error occurs. The response includes
+      the generated content structured according to the provided schema.
+
+    This function sends the provided messages to Azure OpenAI and returns the model's response
+    parsed according to the given schema. It can handle both text-only inputs and inputs that
+    include images, similar to the inference_aoai function.
+    """
+    try:
+        completion = aoai_client.beta.chat.completions.parse(
+            model=deployment,
+            messages=messages,
+            response_format=schema,
+        )
+        print("Structured output inference completed")
+        print(f"Completion content: {completion.choices[0].message.content}")
+        print(f"Parsed event: {completion.choices[0].message.parsed}")
+        return completion
+    except Exception as e:
+        print(f"Error in structured output inference: {e}")
+        return None
+
+
+class ProjectExperience(BaseModel):
+    """Schema for structured project experience output"""
+    project_name: str
+    project_experience: str
 
 class ResumeUpdateProcessor:
     def __init__(self):
@@ -129,11 +185,12 @@ class ResumeUpdateProcessor:
         """Get the resume for the given employee ID."""
         print("Getting resume for employee_id: ", employee_id)
         results = self.search_client_resumes.search(
-            search_text=employee_id,
-            search_fields=['sourceFileName'],
+            search_text="*",
+            filter="employee_id eq '" + employee_id + "'",
             select="id,jobTitle,experienceLevel,content,sourceFileName"
         )
-                
+
+  
         for result in results:
             #check if sourceFileName contains employee_id
             print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
@@ -151,26 +208,52 @@ class ResumeUpdateProcessor:
         sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
         return sorted_results
 
-    def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> str:
+    def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> Dict:
         """
-        Function for generating a project summary using the project data and resume data.
+        Generate a structured project experience using the project data and resume data.
+        
+        Returns:
+            Dict with project_name and project_experience fields
         """
         print("Generating project work experience...")
 
         project_string = ""
         for project in project_data:
             project_string = project_string + project["content"]
-
         
-        #Prepare messages for LLM
-        work_experience_user_message = f"<Current Resume>\n {resume["content"]}\n\n <Project Description>\n {project_string}"
-        messages = [{"role": "system", "content": generate_work_experience_system_prompt}]
-        messages.append({"role": "user", "content": work_experience_user_message})
-        #Invoke LLM
-        response = primary_llm.invoke(messages)
-        print("New Work Experience: ", response.content)
+        current_date = datetime.utcnow().strftime("%Y-%m-%d")
 
-        return response.content
+        generate_work_experience_system_prompt = f"""
+            You are an AI assistant that helps with building resumes.
+            You will be provided with the candidate's current resume as well as a project description that they recently worked on. 
+            Your job will be to use the project description and the format and language of the resume to return a work experience blurb to add into resume.
+            The project summary should be in past tense and should be written in a way that is consistent with the rest of the resume. 
+            The current date is {current_date}. Estimate the start date of the project based on the current date. It should be <start date> to 'Present'.
+
+            Extract the project name and work experience paragraph. In the work experience, make sure to include the project name, the date range, and the work experience blurb. 
+            """
+                
+        # Prepare messages for LLM
+        work_experience_user_message = f"<Current Resume>\n {resume['content']}\n\n <Project Description>\n {project_string}"
+        messages = [
+            {"role": "system", "content": generate_work_experience_system_prompt},
+            {"role": "user", "content": work_experience_user_message}
+        ]
+
+        result = inference_structured_output_aoai(messages, aoai_deployment, ProjectExperience)
+        if result:
+            project_experience = ProjectExperience(**result.choices[0].message.parsed.dict())
+            print(f"Project Name: {project_experience.project_name}")
+            print(f"Work Experience: {project_experience.project_experience}")
+
+        else:
+            print("Failed to process structured output")
+
+
+        return {
+            "project_name": project_experience.project_name,
+            "project_experience": project_experience.project_experience
+        }
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
@@ -406,15 +489,16 @@ class ResumeUpdateProcessor:
             # Get current role from tracker's role history
             current_role = tracker['role_history'][-1]['role_name']
             
-            # Generate project experience description
-            description = self._generate_project_experience(
+            # Generate project experience with structured output
+            generated_content = self._generate_project_experience(
                 project_data=project,
                 role_name=current_role,
                 resume=resume
             )
             
-            # Update tracker with the generated description
-            tracker['description'] = description
+            # Update tracker with the generated content
+            tracker['project_name'] = generated_content['project_name']
+            tracker['description'] = generated_content['project_experience']
             tracker['last_updated'] = datetime.utcnow().isoformat()
             tracker['version'] += 1
             
@@ -443,6 +527,8 @@ class ResumeUpdateProcessor:
             # Extract employee_id and project_number from the tracker
             employee_id = tracker['employee_id']
             project_number = tracker['project_number']
+            
+
             print("Hours > 40 and added_to_resume='no'. Checking if project is on resume...")
             # Run _is_project_on_resume() to check if the project is on the resume
             if self._is_project_on_resume(employee_id, project_number):
@@ -515,6 +601,7 @@ class ResumeUpdateProcessor:
                 "subject_area": member_entry['subject_area'],
                 "total_hours": member_entry['job_hours'],
                 "added_to_resume": "no",
+                "project_name": "",  # Added new field
                 "description": "",
                 "created_timestamp": datetime.utcnow().isoformat(),
                 "last_updated": datetime.utcnow().isoformat(),

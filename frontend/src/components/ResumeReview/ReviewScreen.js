@@ -1,7 +1,7 @@
 import React from 'react';
-import { FileText, HelpCircle, X } from 'lucide-react';
 import ProjectCard from './ProjectCard';
 import Header from './Header';
+import ReviewChecklist from './ReviewChecklist';
 
 export default function ReviewScreen({ projects, onSave, onDiscard, onUpdateContent }) {
   return (
@@ -36,6 +36,8 @@ export default function ReviewScreen({ projects, onSave, onDiscard, onUpdateCont
           </button>
         </div>
       </div>
+      
+      <ReviewChecklist />
     </div>
   );
 }
