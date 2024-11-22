@@ -1,10 +1,13 @@
 # Standard library imports
 import os
+import io
 from datetime import datetime
 # Third-party imports
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response, send_file
 from flask_cors import CORS
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
 
 # Local imports
 from ResumeUpdateProcessor import ResumeUpdateProcessor
@@ -160,12 +163,38 @@ def submit_feedback():
         }), 500
 
 # Add to backend/app.py
+@app.route('/download', methods=['GET'])
+def download_resume():
+    resume_name = request.args.get('resumeName')
 
+    content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
-from azure.storage.blob import BlobServiceClient
-from azure.identity import DefaultAzureCredential
-from flask import send_file
-import io
+    storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
+
+    storage_account_resume_container = os.getenv("STORAGE_ACCOUNT_RESUME_CONTAINER")
+
+    account_url = f"https://{storage_account_name}.blob.core.windows.net"
+    credential = DefaultAzureCredential()
+    blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+
+    # Get container client
+    container_client = blob_service_client.get_container_client(storage_account_resume_container)
+
+    # Get blob client
+    blob_client = container_client.get_blob_client(resume_name)
+
+    try:
+        download_stream = blob_client.download_blob()
+        file_content = download_stream.readall()
+
+        response = make_response(file_content)
+        response.headers['Content-Type'] = content_type
+        response.headers['Content-Disposition'] = f'attachment; filename="{resume_name}"'
+        return response
+    except Exception as e:
+        print(f"Error downloading file: {str(e)}")
+        return make_response('Failed to download file', 500)
+
 
 @app.route('/tips-pdf', methods=['GET'])
 def get_tips_pdf():

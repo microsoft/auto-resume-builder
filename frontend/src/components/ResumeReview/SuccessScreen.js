@@ -1,10 +1,45 @@
 // src/components/ResumeReview/SuccessScreen.js
-import React from 'react';
+import React, {useState} from 'react';
 import { Check, Download } from 'lucide-react';
 
+
+
 export default function SuccessScreen() {
-  const handleDownload = () => {
+  const [isLoading, setIsLoading] = useState(false);
+  const handleDownload = async() => {
     console.log('Downloading resume...');
+    setIsLoading(true);
+    try {
+      // TODO Pass this dynamically
+      var resumeName="updated_resume.docx"
+      const url = `http://localhost:5000/download?resumeName=${resumeName}`;
+        
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Access-Control-Allow-Origin': 'http://localhost:3001',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = resumeName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    catch (error) {
+      console.error('Error downloading document:', error);
+      alert(`An error occurred while downloading ${resumeName}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
