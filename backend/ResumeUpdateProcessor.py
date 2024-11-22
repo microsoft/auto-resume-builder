@@ -14,7 +14,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents import SearchClient
 from langchain_openai import AzureChatOpenAI
-from azure.communication.email import EmailClient  # Added back
+#from azure.communication.email import EmailClient  # Added back
 
 from pydantic import BaseModel
 
@@ -139,7 +139,7 @@ class ResumeUpdateProcessor:
         
         # Initialize Email Client
         connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
-        self.email_client = EmailClient.from_connection_string(connection_string)
+        #self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
         
     def process_key_member(self, member_entry: Dict) -> Dict:
@@ -183,30 +183,41 @@ class ResumeUpdateProcessor:
 
     def _get_resume(self, employee_id: str) -> Dict:
         """Get the resume for the given employee ID."""
-        print("Getting resume for employee_id: ", employee_id)
-        results = self.search_client_resumes.search(
-            search_text="*",
-            filter="employee_id eq '" + employee_id + "'",
+        try:
+            self.logger.info("Getting resume for employee_id: ", employee_id)
+            results = self.search_client_resumes.search(
+            search_text=employee_id,
+            search_fields=['sourceFileName'],
             select="id,jobTitle,experienceLevel,content,sourceFileName"
         )
-
-  
-        for result in results:
-            #check if sourceFileName contains employee_id
-            print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
-            if employee_id in result['sourceFileName']:
-                return result
-        return {}  # added fallback return statement if no results
+            if results: 
+                for result in results:
+                    #check if sourceFileName contains employee_id
+                    print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
+                    if employee_id in result['sourceFileName']:
+                        return result
+            else:
+                return {}
+        except Exception as e:  
+            self.logger.error(f"Error getting project: {str(e)}")
+            return {}
     
     def _get_project(self, project_number: str) -> Dict:
-        search_results = self.search_client_projects.search(
-            search_text="*",
-            filter="project_number eq '" + project_number + "'",
-            select="id, project_number, content, sourcefilename, sourcepage"
-        )
-        
-        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
-        return sorted_results
+        try:
+            search_client = SearchClient(os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                      index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
+                      credential=self.credential)
+            search_results =  search_client.search(
+                search_text="*" ,
+                top=50,
+                filter="project_number eq '" + project_number + "'",
+                select="id, project_number,client_account_number,client_account_name,document_updated, content, sourcefile, sourcepage")
+            
+            sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+            return sorted_results
+        except Exception as e:  
+            self.logger.error(f"Error getting project: {str(e)}")
+            return {}
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> Dict:
         """
@@ -533,8 +544,7 @@ class ResumeUpdateProcessor:
             # Run _is_project_on_resume() to check if the project is on the resume
             if self._is_project_on_resume(employee_id, project_number):
                 #Set added_to_resume to 'yes' and return False
-
-
+                tracker['added_to_resume']='yes'
                 return False
         
             return True

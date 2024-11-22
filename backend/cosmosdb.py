@@ -22,10 +22,10 @@ from azure.identity import DefaultAzureCredential
 class CosmosDBManager:
     def __init__(self, cosmos_host=None, cosmos_database_id=None, cosmos_container_id=None):
         self._load_env_variables(cosmos_host, cosmos_database_id, cosmos_container_id)
-        self.client = self._get_cosmos_client()
-        self.database: Optional[DatabaseProxy] = None
-        self.container: Optional[ContainerProxy] = None
-        self._initialize_database_and_container()
+        self.client = CosmosClient(os.environ.get("COSMOS_HOST"),os.environ.get("COSMOS_MASTER_KEY"))
+        #self.database: Optional[DatabaseProxy] = None
+        #self.container: Optional[ContainerProxy] = None
+        #self._initialize_database_and_container()
 
     def _load_env_variables(self, cosmos_host=None, cosmos_database_id=None, cosmos_container_id=None):
         load_dotenv()
@@ -37,16 +37,16 @@ class CosmosDBManager:
         if not all([self.cosmos_host, self.cosmos_database_id, self.cosmos_container_id]):
             raise ValueError("Cosmos DB configuration is incomplete")
 
-    def _get_cosmos_client(self) -> CosmosClient:
-        print("Initializing Cosmos DB client")
-        print("Using DefaultAzureCredential for Cosmos DB authentication")
-        credential = DefaultAzureCredential(
-            interactive_browser_tenant_id=self.tenant_id,
-            visual_studio_code_tenant_id=self.tenant_id,
-            workload_identity_tenant_id=self.tenant_id,
-            shared_cache_tenant_id=self.tenant_id
-        )
-        return CosmosClient(self.cosmos_host, credential=credential)
+    # def _get_cosmos_client(self) -> CosmosClient:
+    #     print("Initializing Cosmos DB client")
+    #     print("Using DefaultAzureCredential for Cosmos DB authentication")
+    #     credential = DefaultAzureCredential(
+    #         interactive_browser_tenant_id=self.tenant_id,
+    #         visual_studio_code_tenant_id=self.tenant_id,
+    #         workload_identity_tenant_id=self.tenant_id,
+    #         shared_cache_tenant_id=self.tenant_id
+    #     )
+    #     return CosmosClient(self.cosmos_host, credential=credential)
 
     def _initialize_database_and_container(self) -> None:
         try:
