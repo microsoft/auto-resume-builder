@@ -10,9 +10,7 @@ export default function SuccessScreen() {
     console.log('Downloading resume...');
     setIsLoading(true);
     try {
-      // TODO Pass this dynamically
-      var resumeName="updated_resume.docx"
-      const url = `http://localhost:5000/download?resumeName=${resumeName}`;
+      const url = `http://localhost:5000/download`;
         
       const response = await fetch(url, {
         method: 'GET',
@@ -26,17 +24,19 @@ export default function SuccessScreen() {
       }
 
       const blob = await response.blob();
+      const fileName = response.headers.get('Content-Disposition').split('filename=')[1];
+      console.log(fileName)
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = resumeName;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
     }
     catch (error) {
       console.error('Error downloading document:', error);
-      alert(`An error occurred while downloading ${resumeName}`);
+      alert(`An error occurred while downloading resume`);
     } finally {
       setIsLoading(false);
     }

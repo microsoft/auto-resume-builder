@@ -17,7 +17,7 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+CORS(app, expose_headers=['Content-Disposition'])
 
 # Initialize processor
 processor = ResumeUpdateProcessor()
@@ -165,6 +165,8 @@ def submit_feedback():
 # Add to backend/app.py
 @app.route('/download', methods=['GET'])
 def download_resume():
+
+
     resume_name = request.args.get('resumeName')
 
     content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -180,6 +182,7 @@ def download_resume():
     # Get container client
     container_client = blob_service_client.get_container_client(storage_account_resume_container)
 
+    # print(resume_name)
     # Get blob client
     blob_client = container_client.get_blob_client(resume_name)
 
@@ -188,9 +191,13 @@ def download_resume():
         file_content = download_stream.readall()
 
         response = make_response(file_content)
+
         response.headers['Content-Type'] = content_type
-        response.headers['Content-Disposition'] = f'attachment; filename="{resume_name}"'
+        response.headers['Content-Disposition'] = f'attachment; filename={resume_name}'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+
         return response
+    
     except Exception as e:
         print(f"Error downloading file: {str(e)}")
         return make_response('Failed to download file', 500)
