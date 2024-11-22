@@ -5,7 +5,7 @@ directory = 'D:/projects/auto-resume-builder/'
 
 files = [
     'backend/ResumeUpdateProcessor.py',
-    #'backend/cosmosdb.py',
+    'backend/cosmosdb.py',
     'backend/testing.py',
     'backend/app.py',
     'backend/recurring_notifications.py',
@@ -19,7 +19,7 @@ files = [
     'frontend/src/components/ResumeReview/index.js',
     'frontend/src/components/ResumeReview/ProjectCard.js',
     'frontend/src/App.js',
-    'frontend/src/components/ResumeReview/Header.js'
+    'frontend/src/components/ResumeReview/Header.js',
     'frontend/src/components/ResumeReview/FeedbackFeature.js',
 
 

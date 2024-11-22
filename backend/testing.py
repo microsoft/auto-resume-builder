@@ -61,10 +61,10 @@ def test_case_2_trigger_draft():
     result = processor.process_key_member(test_entry)
     print(f"Result: {result}")
 
-    test_entry = load_json_file('events', 'event_5.json')
-    print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
-    result = processor.process_key_member(test_entry)
-    print(f"Result: {result}")
+    # test_entry = load_json_file('events', 'event_5.json')
+    # print(f"\nProcessing entry crossing threshold ({test_entry['job_hours']} hours)...")
+    # result = processor.process_key_member(test_entry)
+    # print(f"Result: {result}")
     
     return result
 
@@ -180,6 +180,8 @@ def cleanup_test_data(employee_id: str):
 if __name__ == "__main__":
     try:
         test_employee_id = "718163"
+
+        processor.reset_resume(test_employee_id)
 
         print("\nCleaning up any existing test data...")
         cleanup_test_data(test_employee_id)

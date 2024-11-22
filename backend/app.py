@@ -104,16 +104,16 @@ def discard_update():
 def save_updates():
     try:
         data = request.get_json()
-        project_numbers = data.get('project_numbers', [])  # Changed from projectIds
-        employee_id = data.get('employee_id')  # Changed from employeeId
+        projects = data.get('projects', [])
+        employee_id = data.get('employee_id')
         
-        if not project_numbers or not employee_id:
+        if not projects or not employee_id:
             return jsonify({
                 'status': 'error',
-                'message': 'Project numbers and employee ID are required'
+                'message': 'Project data and employee ID are required'
             }), 400
 
-        result = processor.save_updates(employee_id, project_numbers)
+        result = processor.save_updates(employee_id, projects)
         
         if result:
             return jsonify({
@@ -162,90 +162,74 @@ def submit_feedback():
             'message': str(e)
         }), 500
 
-# Add to backend/app.py
+from flask import jsonify, send_file
+import os
+
 @app.route('/download', methods=['GET'])
 def download_resume():
-    resume_name = request.args.get('resumeName')
-
-    content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-
-    storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
-
-    storage_account_resume_container = os.getenv("STORAGE_ACCOUNT_RESUME_CONTAINER")
-
-    account_url = f"https://{storage_account_name}.blob.core.windows.net"
-    credential = DefaultAzureCredential()
-    blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
-
-    # Get container client
-    container_client = blob_service_client.get_container_client(storage_account_resume_container)
-
-    # Get blob client
-    blob_client = container_client.get_blob_client(resume_name)
-
     try:
-        download_stream = blob_client.download_blob()
-        file_content = download_stream.readall()
-
-        response = make_response(file_content)
-        response.headers['Content-Type'] = content_type
-        response.headers['Content-Disposition'] = f'attachment; filename="{resume_name}"'
-        return response
-    except Exception as e:
-        print(f"Error downloading file: {str(e)}")
-        return make_response('Failed to download file', 500)
-
-
-@app.route('/tips-pdf', methods=['GET'])
-def get_tips_pdf():
-    try:
-        # Retrieve environment variables once
-        connection_string = os.environ.get('STORAGE_ACCOUNT_CONNECTION_STRING')
-        storage_account_name = os.environ.get('STORAGE_ACCOUNT_NAME')
-        print("Storage account name:", storage_account_name)
+        # Get employee ID from the current user
+        employee_id = get_current_user_id()
         
-        if connection_string:
-            try:
-                blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            except Exception as e:
-                print(f"Connection string auth failed, falling back to DefaultAzureCredential: {str(e)}")
-                # Fall back to DefaultAzureCredential
-                account_url = f"https://{storage_account_name}.blob.core.windows.net"
-                credential = DefaultAzureCredential()
-                blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
-        else:
-            # Directly use DefaultAzureCredential
-            print("Using DefaultAzureCredential")
-            account_url = f"https://{storage_account_name}.blob.core.windows.net"
-            credential = DefaultAzureCredential()
-            blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        # Get the resume metadata using the processor's _get_resume method
+        resume = processor._get_resume(employee_id)
+        if not resume:
+            return jsonify({
+                'status': 'error',
+                'message': 'Resume not found'
+            }), 404
+
+        # Get the filename
+        filename = resume.get('sourceFileName')
+        if not filename:
+            return jsonify({
+                'status': 'error',
+                'message': 'Resume filename not found'
+            }), 404
+
+        # Create the full blob path
+        output_folder = os.environ.get("STORAGE_ACCOUNT_OUTPUT_FOLDER", "updated")
+        blob_path = f"{output_folder}/{filename}"
+
+        content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
         # Get container client
-        container_client = blob_service_client.get_container_client("resumes")
+        container_client = processor.blob_service_client.get_container_client(processor.resume_container_name)
         
         # Get blob client
-        blob_client = container_client.get_blob_client("docs/Resume Guidance.pdf")
-        
-        # Download blob
-        download_stream = blob_client.download_blob()
-        file_content = download_stream.readall()
-        
-        # Create BytesIO object
-        file_stream = io.BytesIO(file_content)
-        file_stream.seek(0)
-        
-        return send_file(
-            file_stream,
-            mimetype='application/pdf',
-            as_attachment=False,
-            download_name='resume_tips.pdf'
-        )
+        blob_client = container_client.get_blob_client(blob_path)
+
+        try:
+            # Download the blob
+            download_stream = blob_client.download_blob()
+            file_content = download_stream.readall()
+
+            # Convert to base64 for safe transmission
+            import base64
+            encoded_content = base64.b64encode(file_content).decode('utf-8')
+
+            return jsonify({
+                'status': 'success',
+                'filename': filename,
+                'content': encoded_content,
+                'contentType': content_type
+            })
+            
+        except Exception as e:
+            print(f"Error downloading file: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to download resume',
+                'details': str(e)
+            }), 500
 
     except Exception as e:
-        print(f"Error serving PDF: {str(e)}")
+        print(f"Error in download route: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': 'Could not retrieve PDF'
+            'message': str(e)
         }), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, threaded=True)

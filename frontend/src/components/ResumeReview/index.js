@@ -5,6 +5,7 @@ import ReviewScreen from './ReviewScreen';
 import SuccessScreen from './SuccessScreen';
 import EmptyScreen from './EmptyScreen';
 import FeedbackFeature from './FeedbackFeature';
+
 import { 
   fetchPendingUpdates, 
   getCurrentUser, 
@@ -19,6 +20,7 @@ const ResumeReview = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [employee_id, setEmployeeId] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     initialize();
@@ -51,12 +53,14 @@ const ResumeReview = () => {
 
   const handleSave = async () => {
     try {
-      const project_numbers = resumeContent.projects.map(p => p.project_number);
-      await saveUpdates(employee_id, project_numbers);
+      setIsSaving(true);
+      await saveUpdates(employee_id, resumeContent.projects);
       setViewState('success');
     } catch (error) {
       setError('Failed to save updates');
       console.error('Error saving resume:', error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -103,6 +107,7 @@ const ResumeReview = () => {
               onDiscard={handleDiscard}
               onUpdateContent={(updatedProjects) => 
                 setResumeContent({ ...resumeContent, projects: updatedProjects })}
+              isSaving={isSaving}
             />
           ) : (
             <SuccessScreen />
@@ -113,5 +118,6 @@ const ResumeReview = () => {
     </div>
   );
 };
+
 
 export default ResumeReview;
