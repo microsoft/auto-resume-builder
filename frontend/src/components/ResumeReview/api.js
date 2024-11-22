@@ -20,26 +20,29 @@ export async function fetchPendingUpdates() {
   return data;
 }
 
-export async function saveUpdates(employee_id, project_numbers) {
-  const response = await fetch('http://localhost:5000/save', {
-      method: 'POST',
-      headers: {
-          'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ 
-          employee_id,
-          project_numbers 
-      })
-  });
-  
-  const data = await response.json();
-  
-  if (data.status !== 'success') {
-      throw new Error(data.message || 'Failed to save updates');
+export async function saveUpdates(employee_id, projects) {
+    const response = await fetch('http://localhost:5000/save', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+            employee_id,
+            projects: projects.map(project => ({
+                project_number: project.project_number,
+                description: project.content
+            }))
+        })
+    });
+    
+    const data = await response.json();
+    
+    if (data.status !== 'success') {
+        throw new Error(data.message || 'Failed to save updates');
+    }
+    
+    return data;
   }
-  
-  return data;
-}
 
 export async function discardUpdate(employee_id, project_number) {
   const response = await fetch('http://localhost:5000/discard', {

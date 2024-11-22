@@ -18,7 +18,38 @@ from azure.communication.email import EmailClient  # Added back
 
 from pydantic import BaseModel
 
-
+from datetime import datetime, timedelta
+from typing import Dict, List, Any
+import logging
+from cosmosdb import CosmosDBManager
+import uuid
+from azure.search.documents import SearchClient
+from azure.search.documents.models import QueryType
+from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
+from dotenv import load_dotenv
+import os
+from azure.storage.blob import BlobServiceClient
+from io import BytesIO
+import json
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import tempfile
+import os
+import contextlib
+import tempfile
+import re
+from prompts import insertion_system_prompt
+from langchain_openai import AzureOpenAIEmbeddings
+from datetime import timezone
+from prompts import generate_work_experience_system_prompt
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents.indexes import SearchIndexClient
+from azure.search.documents import SearchClient
+from langchain_openai import AzureChatOpenAI
+from azure.communication.email import EmailClient  # Added back
+from azure.identity import DefaultAzureCredential
 
 load_dotenv()
 
@@ -26,9 +57,9 @@ load_dotenv()
 aoai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 aoai_key = os.getenv("AZURE_OPENAI_API_KEY")
 aoai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+aoai_embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
 
-#Azure AI Search
-credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
+
 
 primary_llm = AzureChatOpenAI(
     azure_deployment=aoai_deployment,
@@ -43,6 +74,12 @@ primary_llm = AzureChatOpenAI(
 
 API_VERSION = "2024-08-01-preview"
 
+# Azure Blob Storage
+connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
+storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
+container_name = "resumes"
+
+
 # Initialize Azure OpenAI client
 try:
     aoai_client = AzureOpenAI(
@@ -53,6 +90,79 @@ try:
 except Exception as e:
     print(f"Failed to initialize Azure OpenAI client: {e}")
     raise
+
+primary_llm_description_json = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-08-01-preview",
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint,
+    model_kwargs={
+    "response_format": {"type": "json_schema",
+    "json_schema": {
+      "name": "project_title_and_description",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "description"
+        ]
+      }
+    }
+    }
+    }
+)
+
+primary_llm_insertion_json = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-08-01-preview",
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint,
+    model_kwargs={
+    "response_format": {"type": "json_schema",
+    "json_schema": {
+      "name": "project_insertion_position",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "analysis": {
+            "type": "string"
+          },
+          "start_phrase": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis",
+          "start_phrase"
+        ]
+      }
+    }
+    }
+    }
+)
+
+primary_embedding_llm = AzureOpenAIEmbeddings(
+    model=aoai_embedding_deployment,
+    azure_endpoint=aoai_endpoint,
+    api_key=aoai_key,
+    openai_api_version="2024-08-01-preview"
+)
 
 from typing import List, Dict, Optional, Union
 def inference_structured_output_aoai(messages: List[Dict[str, Union[str, List[Dict[str, Union[str, Dict[str, str]]]]]]], deployment: str, schema: BaseModel) -> dict:
@@ -94,24 +204,30 @@ class ProjectExperience(BaseModel):
     project_name: str
     project_experience: str
 
+class ProjectTitleAndDescription(BaseModel):
+    """Schema for parsing project title and description"""
+    title: str
+    description: str
+
 class ResumeUpdateProcessor:
     def __init__(self):
         # Constants
-        self.NOTIFICATION_COOLDOWN_HOURS = 0
+        self.NOTIFICATION_COOLDOWN_HOURS = 24
         self.HOURS_THRESHOLD = 40
-        self.credential = credential
+        #Azure AI Search
+        self.ai_search_credential = AzureKeyCredential(os.environ.get("AZURE_SEARCH_KEY"))
         
         # Initialize Azure AI Search clients
         self.search_client_resumes = SearchClient(
             endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
             index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
-            credential=self.credential
+            credential=self.ai_search_credential
         )
         
         self.search_client_projects = SearchClient(
             endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
             index_name=os.environ.get("AZURE_SEARCH_INDEX_PROJECTS"),
-            credential=self.credential
+            credential=self.ai_search_credential
         )
         
         self.events_container = CosmosDBManager(
@@ -141,7 +257,30 @@ class ResumeUpdateProcessor:
         connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
         self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
-        
+
+        self.blob_service_client = None
+        try:
+            # First try connection string
+            connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
+            if connect_str:
+                self.logger.info("Initializing blob storage with connection string")
+                self.blob_service_client = BlobServiceClient.from_connection_string(connect_str)
+            else:
+                # Fall back to DefaultAzureCredential
+                self.logger.info("No connection string found, using DefaultAzureCredential")
+                storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
+                account_url = f"https://{storage_account_name}.blob.core.windows.net"
+                credential = DefaultAzureCredential()
+                self.blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize blob storage client: {str(e)}")
+            raise
+
+        # Store container names
+        self.resume_container_name = os.getenv("STORAGE_ACCOUNT_RESUME_CONTAINER", "resumes")
+        self.input_resumes_folder = os.environ.get("STORAGE_ACCOUNT_INPUT_FOLDER", "processed")
+        self.updated_resumes_folder = os.environ.get("STORAGE_ACCOUNT_OUTPUT_FOLDER", "updated")
+            
     def process_key_member(self, member_entry: Dict) -> Dict:
         """Process an incoming key member entry."""
         try:
@@ -184,18 +323,19 @@ class ResumeUpdateProcessor:
     def _get_resume(self, employee_id: str) -> Dict:
         """Get the resume for the given employee ID."""
         print("Getting resume for employee_id: ", employee_id)
+        print(f"Querying {self.search_client_resumes._index_name} for employee_id: ", employee_id)
         results = self.search_client_resumes.search(
             search_text="*",
             filter="employee_id eq '" + employee_id + "'",
-            select="id,jobTitle,experienceLevel,content,sourceFileName"
+            select="id,jobTitle,experienceLevel,content,sourceFileName,employee_id"
         )
 
   
         for result in results:
             #check if sourceFileName contains employee_id
-            print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
-            if employee_id in result['sourceFileName']:
-                return result
+            #print sourceFileName
+            print("SourceFileName: ", result["sourceFileName"])
+            return result
         return {}  # added fallback return statement if no results
     
     def _get_project(self, project_number: str) -> Dict:
@@ -464,12 +604,30 @@ class ResumeUpdateProcessor:
                 {"role": "user", "content": user_message}
             ]
             
+            
             # Call LLM
             response = primary_llm.invoke(messages)
             
             # Extract answer and convert to boolean
             answer = response.content.strip().lower()
+            print(f"Is project on resume?: {answer}")
             self.logger.info(f"LLM response for project inclusion check: {answer}")
+            
+            #if answer == "yes", update tracker with added_to_resume = 'yes'
+            if answer == "yes":
+                #update tracker
+                tracker_id = f"{project_number}-{employee_id}"
+                tracker = self.trackers_container.query_items(
+                    query="SELECT * FROM c WHERE c.id = @id",
+                    parameters=[{"name": "@id", "value": tracker_id}],
+                    partition_key="resumeupdatestatus"
+                )
+                if tracker:
+                    tracker[0]['added_to_resume'] = 'yes'
+                    tracker[0]['last_updated'] = datetime.utcnow().isoformat()
+                    tracker[0]['version'] += 1
+                    self.trackers_container.update_item(tracker[0])
+                    print("Tracker updated with added_to_resume='yes'")
             
             return answer == "yes"
             
@@ -505,17 +663,22 @@ class ResumeUpdateProcessor:
             # Save the updated tracker
             updated_tracker = self.trackers_container.update_item(tracker)
 
-            # Send notification and update notification record
-            if self._send_notification(tracker['employee_id']):
-                print("Notification sent successfully")
-                self._update_notification_record(tracker['employee_id'])
+            # Check notification cooldown before sending notification
+            if self._should_send_notification(tracker['employee_id']):
+                if self._send_notification(tracker['employee_id']):
+                    print("Notification sent successfully")
+                    self._update_notification_record(tracker['employee_id'])
+                else:
+                    print("Failed to send notification")
+            else:
+                print(f"Skipping notification for employee {tracker['employee_id']} due to cooldown period")
             
             return updated_tracker
             
         except Exception as e:
             self.logger.error(f"Error in trigger_draft_creation: {str(e)}")
             raise
-    
+        
     def _should_trigger_update(self, tracker: Dict) -> bool:
         """
         Determine if we should trigger a resume update.
@@ -668,53 +831,301 @@ class ResumeUpdateProcessor:
             partition_key="resumeupdatestatus"
         )
     
-    def save_updates(self, employee_id: str, project_numbers: List[str]) -> bool:
+    def _parse_project_title_and_description(self, full_description: str) -> Dict[str, str]:
         """
-        Save multiple resume updates, updating their status to 'yes'.
+        Use LLM to separate the title and description from a project description.
+        
+        Args:
+            full_description: The complete project description
+            
+        Returns:
+            Dict with 'title' and 'description' keys
+        """
+        try:
+            system_prompt = """You are an expert at parsing resume entries. Given a project description 
+            that starts with a title line followed by details, separate out the title line from the description.
+            The title line typically includes the role, project name, location, and date range.
+
+            Make sure:
+            1. The title includes ALL parts (role, project name, location, dates)
+            2. The description does not repeat the title information
+            3. Both sections maintain proper grammar and formatting"""
+
+            user_message = f"Please parse this project entry:\n\n{full_description}"
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            result = inference_structured_output_aoai(messages, aoai_deployment, ProjectTitleAndDescription)
+            if result:
+                parsed_content = ProjectTitleAndDescription(**result.choices[0].message.parsed.dict())
+                print(f"Parsed title: {parsed_content.title}")
+                print(f"Parsed description: {parsed_content.description}")
+                return {
+                    "title": parsed_content.title,
+                    "description": parsed_content.description
+                }
+            else:
+                self.logger.error("Failed to parse project content")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error parsing project title and description: {str(e)}")
+            return None
+
+    def save_updates(self, employee_id: str, projects: List[Dict]) -> bool:
+        """
+        Save multiple resume updates by updating their status and modifying the resume document.
+        Updates trackers only after successful document save to maintain consistency.
         
         Args:
             employee_id: ID of the employee
-            project_numbers: List of project numbers to save
+            projects: List of project dictionaries containing project_number and description
             
         Returns:
             bool: True if all updates were saved successfully, False otherwise
         """
         try:
-            self.logger.info(f"Saving updates for employee {employee_id}, projects: {project_numbers}")
+            self.logger.info(f"Saving updates for employee {employee_id}, projects: {projects}")
             
-            for project_number in project_numbers:
-                # Create the tracker ID using the combination
-                tracker_id = f"{project_number}-{employee_id}"
-                
-                # Query the tracker
-                results = self.trackers_container.query_items(
-                    query="SELECT * FROM c WHERE c.id = @id",
-                    parameters=[{"name": "@id", "value": tracker_id}],
-                    partition_key="resumeupdatestatus"
-                )
-                
-                results_list = list(results)
-                if not results_list:
-                    self.logger.error(f"No tracker found with ID: {tracker_id}")
-                    continue
+            # Get the employee's current resume
+            resume = self._get_resume(employee_id)
+            if not resume:
+                self.logger.error(f"No resume found for employee {employee_id}")
+                return False
+            
+            resume_name = resume.get('sourceFileName')
+            print(f"Resume name: {resume_name}")
+            if not resume_name:
+                self.logger.error(f"No resume filename found for employee {employee_id}")
+                return False
+
+            # Download and prepare resume document once
+            doc = self._get_resume_document(resume_name)
+            if not doc:
+                self.logger.error(f"Failed to download resume document: {resume_name}")
+                return False
+
+            # Find insertion point once
+            insert_phrase = self._find_insert_position(doc)
+            if not insert_phrase:
+                self.logger.error("Failed to find insertion point in resume")
+                return False
+
+            # Collect trackers to update
+            trackers_to_update = []
+
+            # Process each project update
+            for project in projects:
+                try:
+                    project_number = project['project_number']
+                    description = project['description']
                     
-                tracker = results_list[0]
-                
-                # For now, just update the tracker status
-                tracker['added_to_resume'] = 'yes'
-                tracker['last_updated'] = datetime.utcnow().isoformat()
-                tracker['version'] += 1
-                
-                # Save the updated tracker
-                self.trackers_container.update_item(tracker)
-                
-                self.logger.info(f"Successfully saved update for tracker: {tracker_id}")
-            
+                    # Parse the title and description
+                    parsed_content = self._parse_project_title_and_description(description)
+                    if not parsed_content:
+                        self.logger.error(f"Failed to parse content for project {project_number}")
+                        return False
+
+                    # Get tracker
+                    tracker_id = f"{project_number}-{employee_id}"
+                    results = self.trackers_container.query_items(
+                        query="SELECT * FROM c WHERE c.id = @id",
+                        parameters=[{"name": "@id", "value": tracker_id}],
+                        partition_key="resumeupdatestatus"
+                    )
+                    
+                    results_list = list(results)
+                    if not results_list:
+                        self.logger.error(f"No tracker found with ID: {tracker_id}")
+                        continue
+                            
+                    tracker = results_list[0]
+                    
+                    # Prepare tracker update (but don't save yet)
+                    tracker['project_name'] = parsed_content['title']  # Store the parsed title
+                    tracker['description'] = parsed_content['description']  # Store the parsed description
+                    tracker['added_to_resume'] = 'yes'
+                    tracker['last_updated'] = datetime.utcnow().isoformat()
+                    tracker['version'] += 1
+                    
+                    trackers_to_update.append(tracker)
+                    
+                    # Add project to document using parsed content
+                    doc = self._save_new_project(doc, json.dumps(parsed_content), insert_phrase)
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing project {project_number}: {str(e)}")
+                    return False
+
+            # Save updated resume once
+            enhanced_docx_name = self._save_resume_document(doc, resume_name, resume)
+            if not enhanced_docx_name:
+                self.logger.error("Failed to save updated resume")
+                return False
+
+            # Only update trackers after successful document save
+            for tracker in trackers_to_update:
+                try:
+                    self.trackers_container.update_item(tracker)
+                    self.logger.info(f"Successfully updated tracker: {tracker['id']}")
+                except Exception as e:
+                    self.logger.error(f"Error updating tracker {tracker['id']}: {str(e)}")
+                    # Log error but continue with other trackers
+                    continue
+
+            self.logger.info(f"Successfully updated resume: {enhanced_docx_name}")
             return True
-                
+                    
         except Exception as e:
             self.logger.error(f"Error saving updates: {str(e)}")
             return False
+            
+
+
+    def _get_resume_document(self, resume_name: str) -> Document:
+        """Download resume document from blob storage."""
+        try:
+            print("Downloading resume document...")
+            
+            blob_name = f"{self.input_resumes_folder}/{resume_name}"
+            print(f"Downloading resume document: {blob_name}")
+            
+            container_client = self.blob_service_client.get_container_client(self.resume_container_name)
+            blob_client = container_client.get_blob_client(blob_name)
+
+            if not blob_client.exists():
+                self.logger.error(f"Blob {blob_name} not found in {self.resume_container_name}.")
+                return None
+
+            # Download and return document
+            blob_data = blob_client.download_blob().readall()
+            return Document(BytesIO(blob_data))
+
+        except Exception as e:
+            self.logger.error(f"Error downloading resume document: {str(e)}")
+            return None
+
+    def _save_resume_document(self, doc: Document, resume_name: str, resume: dict) -> str:
+        """Save updated resume document to blob storage and update index."""
+        try:
+            resume_name_without_ext = os.path.splitext(resume_name)[0]
+            enhanced_docx_name = f"{resume_name_without_ext}.docx"
+
+            # Update search index
+            print("Converting document to string...")
+            document_content = self._read_docx_to_string(doc)
+            print("Updating resume index...")
+            self._update_resume_index(resume, document_content)
+            print("Resume index updated.")
+
+            # Save document to blob storage
+            container_client = self.blob_service_client.get_container_client(self.resume_container_name)
+
+            # Save the enhanced DOCX to blob with updated folder path
+            with self._temporary_file(suffix='.docx') as temp_docx_path:
+                doc.save(temp_docx_path)
+                enhanced_docx_blob_name = f"{self.updated_resumes_folder}/{enhanced_docx_name}"
+                
+                enhanced_docx_client = container_client.get_blob_client(enhanced_docx_blob_name)
+                with open(temp_docx_path, "rb") as docx_file:          
+                    enhanced_docx_client.upload_blob(docx_file, overwrite=True)
+
+                print(f"Enhanced resume (DOCX) uploaded as {enhanced_docx_blob_name}")
+            return enhanced_docx_blob_name
+
+        except Exception as e:
+            self.logger.error(f"Error saving resume document: {str(e)}")
+            return None
+
+
+
+    #NEW
+    def _read_docx_to_string(self, doc: Document):
+        # Extract text from each paragraph and concatenate into a single string
+        full_text = []
+        for paragraph in doc.paragraphs:
+            full_text.append(paragraph.text)
+        
+        return '\n'.join(full_text)
+
+    #NEW
+    @contextlib.contextmanager
+    def _temporary_file(self, suffix=None):
+        """Context manager for creating and cleaning up a temporary file."""
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        try:
+            os.close(fd)
+            yield path
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    #NEW            
+    def _find_insert_position(self, doc):
+        # Extract text from the document
+        print("Finding insert position...")
+        full_text = "\n".join([para.text for para in doc.paragraphs])
+        # Prompt for the LLM
+
+        messages = [
+            {"role": "system", "content": insertion_system_prompt},
+            {"role": "user", "content": full_text}
+        ]
+        
+        result = primary_llm_insertion_json.invoke(messages)
+        result_json = json.loads(result.content)
+        
+        print("Analysis:", result_json['analysis'])
+        print("Start Phrase:", result_json['start_phrase'])
+
+        return result_json['start_phrase']
+    
+    def _save_new_project(self, doc: Document, new_project: str, insert_phrase: str):
+
+        print(f"Inserting new project: {new_project}")
+        json_project = json.loads(new_project)
+        for para in doc.paragraphs:
+            if insert_phrase in para.text:
+                # Insert the new project before the paragraph containing the insert phrase
+                new_para = para.insert_paragraph_before()
+                new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                run = new_para.add_run(json_project['title'])
+                run.bold = True
+                run.font.size = Pt(10)
+                new_para.add_run('. ' + json_project['description'])
+                new_para.style = 'Normal'
+                # Add a blank line after the new project
+                para.insert_paragraph_before()
+                return doc
+        
+        return doc
+    
+    def _update_resume_index(self, resume: dict, resume_content: str):
+        """Update the search index with the new resume content."""
+        try:
+            search_client = SearchClient(
+                endpoint=os.environ.get("AZURE_SEARCH_ENDPOINT"),
+                index_name=os.environ.get("AZURE_SEARCH_INDEX_RESUMES"),
+                credential=self.ai_search_credential  # Using instance variable instead of global
+            )
+
+            current_time_iso = datetime.now(timezone.utc).isoformat()
+            resume["content"] = resume_content
+            resume["searchVector"] = primary_embedding_llm.embed_query(resume_content)
+            resume["date"] = current_time_iso
+            result = search_client.upload_documents(documents=[resume])
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error updating resume index: {str(e)}")
+            return False
+    
+    
 
     def discard_update(self, employee_id: str, project_number: str) -> bool:
         """
@@ -871,4 +1282,47 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error storing feedback: {str(e)}")
             raise
+    
+
+    def reset_resume(self, employee_id: str) -> bool:
+        """
+        Reset the search index to match the original resume in the /processed folder.
         
+        Args:
+            employee_id: ID of the employee
+            
+        Returns:
+            bool: True if reset was successful, False otherwise
+        """
+        try:
+            # Get the resume metadata from search index
+            resume = self._get_resume(employee_id)
+            if not resume:
+                self.logger.error(f"No resume found for employee {employee_id}")
+                return False
+            
+            resume_name = resume.get('sourceFileName')
+            if not resume_name:
+                self.logger.error(f"No resume filename found for employee {employee_id}")
+                return False
+
+            # Download the original resume from /processed folder
+            doc = self._get_resume_document(resume_name)
+            if not doc:
+                self.logger.error(f"Failed to download original resume: {resume_name}")
+                return False
+
+            # Convert document to string
+            document_content = self._read_docx_to_string(doc)
+            
+            # Update the search index with original content
+            if self._update_resume_index(resume, document_content):
+                self.logger.info(f"Successfully reset search index for employee {employee_id}")
+                return True
+            else:
+                self.logger.error(f"Failed to update search index for employee {employee_id}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"Error resetting resume: {str(e)}")
+            return False

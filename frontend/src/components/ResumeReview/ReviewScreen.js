@@ -1,9 +1,10 @@
 import React from 'react';
+import { Loader2 } from 'lucide-react'; // Import the loading icon
 import ProjectCard from './ProjectCard';
 import Header from './Header';
 import ReviewChecklist from './ReviewChecklist';
 
-export default function ReviewScreen({ projects, onSave, onDiscard, onUpdateContent }) {
+export default function ReviewScreen({ projects, onSave, onDiscard, onUpdateContent, isSaving = false }) {
   return (
     <div className="flex-1 flex flex-col">
       <Header />
@@ -28,11 +29,19 @@ export default function ReviewScreen({ projects, onSave, onDiscard, onUpdateCont
         <div className="flex justify-end mt-8">
           <button
             onClick={onSave}
+            disabled={isSaving}
             className="px-8 py-3 rounded-xl bg-green-500 hover:bg-green-600 text-gray-900 
                      font-semibold transition duration-200 ease-in-out transform hover:scale-105 
-                     shadow-lg"
+                     shadow-lg inline-flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Save
+            {isSaving ? (
+              <>
+                <Loader2 className="animate-spin mr-2" size={20} />
+                <span>Saving...</span>
+              </>
+            ) : (
+              'Save'
+            )}
           </button>
         </div>
       </div>
