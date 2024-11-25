@@ -50,7 +50,8 @@ from azure.search.documents import SearchClient
 from langchain_openai import AzureChatOpenAI
 from azure.communication.email import EmailClient  # Added back
 from azure.identity import DefaultAzureCredential
-
+import requests
+import msal
 load_dotenv()
 
 # Azure OpenAI
@@ -79,6 +80,18 @@ connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
 storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
 container_name = "resumes"
 
+# Primary LLM
+primary_llm_json = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-05-01-preview",
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint,
+    model_kwargs={"response_format": {"type": "json_object"}}
+)
 
 # Initialize Azure OpenAI client
 try:
@@ -254,30 +267,15 @@ class ResumeUpdateProcessor:
         self.notification_cooldown = timedelta(hours=self.NOTIFICATION_COOLDOWN_HOURS)
         
         # Initialize Email Client
-        connection_string = os.environ.get("COMMUNICATION_SERVICES_CONNECTION_STRING")
-        self.email_client = EmailClient.from_connection_string(connection_string)
         self.webapp_url = os.environ.get("WEBAPP_URL")
-
-        self.blob_service_client = None
-        try:
-            # First try connection string
-            connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
-            if connect_str:
-                self.logger.info("Initializing blob storage with connection string")
-                self.blob_service_client = BlobServiceClient.from_connection_string(connect_str)
-            else:
-                # Fall back to DefaultAzureCredential
-                self.logger.info("No connection string found, using DefaultAzureCredential")
-                storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
-                account_url = f"https://{storage_account_name}.blob.core.windows.net"
-                credential = DefaultAzureCredential()
-                self.blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
-        except Exception as e:
-            self.logger.error(f"Failed to initialize blob storage client: {str(e)}")
-            raise
+        
+        # Initialize Blob Storage client
+        connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
+        self.blob_service_client = BlobServiceClient.from_connection_string(connect_str)
 
         # Store container names
-        self.resume_container_name = os.getenv("STORAGE_ACCOUNT_RESUME_CONTAINER", "resumes")
+        self.resume_container_name = os.getenv("STORAGE_ACCOUNT_RESUME_CONTAINER")
+        self.save_container_name = os.getenv("STORAGE_ACCOUNT_SAVE_CONTAINER")
         self.input_resumes_folder = os.environ.get("STORAGE_ACCOUNT_INPUT_FOLDER", "processed")
         self.updated_resumes_folder = os.environ.get("STORAGE_ACCOUNT_OUTPUT_FOLDER", "updated")
             
@@ -322,31 +320,40 @@ class ResumeUpdateProcessor:
 
     def _get_resume(self, employee_id: str) -> Dict:
         """Get the resume for the given employee ID."""
-        print("Getting resume for employee_id: ", employee_id)
-        print(f"Querying {self.search_client_resumes._index_name} for employee_id: ", employee_id)
-        results = self.search_client_resumes.search(
-            search_text="*",
-            filter="employee_id eq '" + employee_id + "'",
-            select="id,jobTitle,experienceLevel,content,sourceFileName,employee_id"
+        try:
+            self.logger.info("Getting resume for employee_id: ", employee_id)
+            results = self.search_client_resumes.search(
+            search_text=employee_id,
+            search_fields=['sourceFileName'],
+            select="id,jobTitle,experienceLevel,content,sourceFileName"
         )
-
-  
-        for result in results:
-            #check if sourceFileName contains employee_id
-            #print sourceFileName
-            print("SourceFileName: ", result["sourceFileName"])
-            return result
+            if results:
+                for result in results:
+                    #check if sourceFileName contains employee_id
+                    print("Checking if employee_id in sourceFileName: ", result['sourceFileName'])
+                    if employee_id in result['sourceFileName']:
+                        return result
+            else:
+                return {}
+        except Exception as e:  
+            self.logger.error(f"Error getting resume: {str(e)}")
+            return {}
         return {}  # added fallback return statement if no results
     
     def _get_project(self, project_number: str) -> Dict:
-        search_results = self.search_client_projects.search(
-            search_text="*",
-            filter="project_number eq '" + project_number + "'",
-            select="id, project_number, content, sourcefilename, sourcepage"
-        )
-        
-        sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
-        return sorted_results
+        try:
+            search_results = self.search_client_projects.search(
+                search_text="*",
+                filter="project_number eq '" + project_number + "'",
+                select="id, project_number, content, sourcefile, sourcepage",
+                top=10
+            )
+            
+            sorted_results = sorted(search_results, key=lambda x: x['sourcepage'])
+            return sorted_results
+        except Exception as e:  
+            self.logger.error(f"Error getting projects: {str(e)}")
+            return {}
 
     def _generate_project_experience(self, project_data: Dict, role_name: str, resume: Dict) -> Dict:
         """
@@ -370,7 +377,8 @@ class ResumeUpdateProcessor:
             The project summary should be in past tense and should be written in a way that is consistent with the rest of the resume. 
             The current date is {current_date}. Estimate the start date of the project based on the current date. It should be <start date> to 'Present'.
 
-            Extract the project name and work experience paragraph. In the work experience, make sure to include the project name, the date range, and the work experience blurb. 
+            Extract the project name and work experience paragraph and return in json format with keys as project_name and project_experience. 
+            In the work experience, make sure to include the project name, the date range, and the work experience blurb. 
             """
                 
         # Prepare messages for LLM
@@ -379,21 +387,16 @@ class ResumeUpdateProcessor:
             {"role": "system", "content": generate_work_experience_system_prompt},
             {"role": "user", "content": work_experience_user_message}
         ]
-
-        result = inference_structured_output_aoai(messages, aoai_deployment, ProjectExperience)
+        result = primary_llm_json.invoke(messages)
+        result_json = json.loads(result.content)
         if result:
-            project_experience = ProjectExperience(**result.choices[0].message.parsed.dict())
-            print(f"Project Name: {project_experience.project_name}")
-            print(f"Work Experience: {project_experience.project_experience}")
+            print(f"Project Name: {result_json['project_name']}")
+            print(f"Work Experience: {result_json['project_experience']}")
+            return result_json
 
         else:
             print("Failed to process structured output")
-
-
-        return {
-            "project_name": project_experience.project_name,
-            "project_experience": project_experience.project_experience
-        }
+            return None
 
     def _get_employee_email(self, employee_id: str) -> str:
         """Get employee email from metadata container."""
@@ -415,99 +418,51 @@ class ResumeUpdateProcessor:
             self.logger.error(f"Error getting employee email: {str(e)}")
             return None
 
+    def _get_access_token(self) -> str:
+        client_id = os.environ.get("MICROSOFT_CLIENT_ID")
+        client_secret = os.environ.get("MICROSOFT_CLIENT_SECRET")
+        tenant_id = os.environ.get("TENANT_ID")
+        scopes = [os.environ.get("MICROSOFT_SCOPES")]
+        authority = f'https://login.microsoftonline.com/{tenant_id}'
+        client_microsoft = msal.ConfidentialClientApplication(client_id, authority=authority, client_credential=client_secret)
+        result = client_microsoft.acquire_token_silent(scopes, account=None)
+        if not result:
+            result = client_microsoft.acquire_token_for_client(scopes=scopes)
+        if 'access_token' in result:
+            return result['access_token']
+        else:
+            raise Exception(f"Could not acquire token: {result.get('error_description')}") 
+
     def _send_notification(self, employee_id: str) -> bool:
         try:
             employee_email = self._get_employee_email(employee_id)
             if not employee_email:
                 self.logger.error(f"Could not send notification - no email found for employee {employee_id}")
                 return False
+            print('Sending email to:', employee_email)
 
             review_link = f"{self.webapp_url}/resume-review"
+            user_id = 'revanthst@cdmsmith.com'
+            reciever_email = 'revanthst@cdmsmith.com'
+            endpoint = f'https://graph.microsoft.com/v1.0/users/{user_id}/sendMail'
 
-            message = {
-                "senderAddress": "DoNotReply@5fec6054-f6e1-4926-9c37-029ca719c8ae.azurecomm.net",
-                "recipients": {
-                    "to": [{"address": employee_email}]
-                },
-                "content": {
-                    "subject": "Resume Update Required",
-                    "plainText": (
-                        "Hello,\n\n"
-                        "You have a pending resume update that requires your review. Please take a moment to review and approve these updates to keep your resume current.\n\n"
-                        f"Review your updates here: {review_link}\n\n"
-                        "This is an automated message. Please do not reply to this email."
-                    ),
-                    "html": f"""
-                    <html>
-                        <head>
-                            <style>
-                                body {{
-                                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-                                    line-height: 1.6;
-                                    margin: 0;
-                                    padding: 0;
-                                    background-color: #ffffff;
-                                }}
-                                .container {{
-                                    max-width: 600px;
-                                    margin: 0 auto;
-                                    background: #ffffff;
-                                }}
-                                .header {{
-                                    background-color: #003087;
-                                    padding: 20px;
-                                    text-align: left;
-                                }}
-                                .header h1 {{
-                                    margin: 0;
-                                    color: #ffffff;
-                                    font-size: 20px;
-                                    font-weight: 500;
-                                }}
-                                .content {{
-                                    padding: 40px 20px;
-                                    color: #333333;
-                                }}
-                                .button {{
-                                    display: inline-block;
-                                    background-color: #7AC143;
-                                    color: #ffffff;
-                                    padding: 10px 24px;
-                                    text-decoration: none;
-                                    border-radius: 4px;
-                                    font-weight: 500;
-                                    margin-top: 20px;
-                                }}
-                                .footer {{
-                                    padding: 20px;
-                                    color: #666666;
-                                    font-size: 14px;
-                                    border-top: 1px solid #eeeeee;
-                                }}
-                            </style>
-                        </head>
-                        <body>
-                            <div class="container">
-                                <div class="header">
-                                    <h1>📄 Resume Update Review Required</h1>
-                                </div>
-                                <div class="content">
-                                    <p>Hello,</p>
-                                    <p>You have a pending resume update that requires your review. Please take a moment to review and approve these updates to keep your resume current.</p>
-                                    <a href="{review_link}" class="button">Review Updates Now</a>
-                                </div>
-                                <div class="footer">
-                                    This is an automated message. Please do not reply to this email.
-                                </div>
-                            </div>
-                        </body>
-                    </html>"""
-                }
+            email_data = {
+                "message": {
+                    "subject": f"Resume Update Required",
+                    "body": {
+                        "contentType": "Text",
+                        "content": f"Hello,\n\nYou have a pending resume update that requires your review.Please take a moment to review and approve these updates to keep your resume current\n\n Review your updates here: {review_link}\n\n\This is an automated message. Please do not reply to this email."},
+                    "toRecipients": [{"emailAddress": {"address": f"{reciever_email}"}}]
+                }}
+            access_token = self._get_access_token()
+            # Send email request
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
             }
+            response = requests.post(endpoint, headers=headers, json=email_data)
 
-            poller = self.email_client.begin_send(message)
-            result = poller.result()
-            self.logger.info(f"Email sent to {employee_email}: {result}")
+            self.logger.info(f"Email sent to {employee_email}")
             return True
 
         except Exception as e:
@@ -696,9 +651,8 @@ class ResumeUpdateProcessor:
             # Run _is_project_on_resume() to check if the project is on the resume
             if self._is_project_on_resume(employee_id, project_number):
                 #Set added_to_resume to 'yes' and return False
-
-
-                return False
+                return True
+                #return False
         
             return True
 
@@ -849,7 +803,10 @@ class ResumeUpdateProcessor:
             Make sure:
             1. The title includes ALL parts (role, project name, location, dates)
             2. The description does not repeat the title information
-            3. Both sections maintain proper grammar and formatting"""
+            3. Both sections maintain proper grammar and formatting
+            
+            Return the title and description in json format with keys as title and description."""
+
 
             user_message = f"Please parse this project entry:\n\n{full_description}"
             
@@ -857,16 +814,13 @@ class ResumeUpdateProcessor:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ]
-            
-            result = inference_structured_output_aoai(messages, aoai_deployment, ProjectTitleAndDescription)
+            result = primary_llm_json.invoke(messages)
+            result_json = json.loads(result.content)
+
             if result:
-                parsed_content = ProjectTitleAndDescription(**result.choices[0].message.parsed.dict())
-                print(f"Parsed title: {parsed_content.title}")
-                print(f"Parsed description: {parsed_content.description}")
-                return {
-                    "title": parsed_content.title,
-                    "description": parsed_content.description
-                }
+                print(f"Parsed title: {result_json['title']}")
+                print(f"Parsed description: {result_json['description']}")
+                return result_json
             else:
                 self.logger.error("Failed to parse project content")
                 return None
@@ -988,16 +942,13 @@ class ResumeUpdateProcessor:
     def _get_resume_document(self, resume_name: str) -> Document:
         """Download resume document from blob storage."""
         try:
-            print("Downloading resume document...")
-            
-            blob_name = f"{self.input_resumes_folder}/{resume_name}"
-            print(f"Downloading resume document: {blob_name}")
+            print(f"Downloading resume document: {resume_name}")
             
             container_client = self.blob_service_client.get_container_client(self.resume_container_name)
-            blob_client = container_client.get_blob_client(blob_name)
+            blob_client = container_client.get_blob_client(resume_name)
 
             if not blob_client.exists():
-                self.logger.error(f"Blob {blob_name} not found in {self.resume_container_name}.")
+                self.logger.error(f"Blob {resume_name} not found in {self.resume_container_name}.")
                 return None
 
             # Download and return document
@@ -1018,16 +969,17 @@ class ResumeUpdateProcessor:
             print("Converting document to string...")
             document_content = self._read_docx_to_string(doc)
             print("Updating resume index...")
-            self._update_resume_index(resume, document_content)
+            
+            #self._update_resume_index(resume, document_content)
             print("Resume index updated.")
 
             # Save document to blob storage
-            container_client = self.blob_service_client.get_container_client(self.resume_container_name)
+            container_client = self.blob_service_client.get_container_client(self.save_container_name)
 
             # Save the enhanced DOCX to blob with updated folder path
             with self._temporary_file(suffix='.docx') as temp_docx_path:
                 doc.save(temp_docx_path)
-                enhanced_docx_blob_name = f"{self.updated_resumes_folder}/{enhanced_docx_name}"
+                enhanced_docx_blob_name = enhanced_docx_name
                 
                 enhanced_docx_client = container_client.get_blob_client(enhanced_docx_blob_name)
                 with open(temp_docx_path, "rb") as docx_file:          
@@ -1104,7 +1056,7 @@ class ResumeUpdateProcessor:
                 return doc
         
         return doc
-    
+
     def _update_resume_index(self, resume: dict, resume_content: str):
         """Update the search index with the new resume content."""
         try:
@@ -1124,8 +1076,6 @@ class ResumeUpdateProcessor:
         except Exception as e:
             self.logger.error(f"Error updating resume index: {str(e)}")
             return False
-    
-    
 
     def discard_update(self, employee_id: str, project_number: str) -> bool:
         """
@@ -1314,14 +1264,14 @@ class ResumeUpdateProcessor:
 
             # Convert document to string
             document_content = self._read_docx_to_string(doc)
-            
+            return True
             # Update the search index with original content
-            if self._update_resume_index(resume, document_content):
-                self.logger.info(f"Successfully reset search index for employee {employee_id}")
-                return True
-            else:
-                self.logger.error(f"Failed to update search index for employee {employee_id}")
-                return False
+            # if self._update_resume_index(resume, document_content):
+            #     self.logger.info(f"Successfully reset search index for employee {employee_id}")
+            #     return True
+            # else:
+            #     self.logger.error(f"Failed to update search index for employee {employee_id}")
+            #     return False
 
         except Exception as e:
             self.logger.error(f"Error resetting resume: {str(e)}")

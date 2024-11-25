@@ -33,7 +33,7 @@ def test_case_1_under_threshold():
     print("\n=== Test Case 1: Multiple Events Under Threshold ===")
     
     # Load and process first event
-    test_entry1 = load_json_file('events', 'event_1.json')
+    test_entry1 = load_json_file('events', 'event_jeffrey.json')
     print(f"\nProcessing first entry ({test_entry1['job_hours']} hours)...")
     result1 = processor.process_key_member(test_entry1)
     print(f"Result: {result1}")
@@ -179,25 +179,25 @@ def cleanup_test_data(employee_id: str):
 
 if __name__ == "__main__":
     try:
-        test_employee_id = "718163"
+        test_employee_id = "223593"
 
-        processor.reset_resume(test_employee_id)
+        #processor.reset_resume(test_employee_id)
 
-        print("\nCleaning up any existing test data...")
-        cleanup_test_data(test_employee_id)
+        #print("\nCleaning up any existing test data...")
+        #cleanup_test_data(test_employee_id)
         
         # print("Creating employee metadata...")
-        create_employee_metadata()
+        #create_employee_metadata()
         
         
         # # print("\nRunning Test Case 1: Under Threshold Events")
         test_case_1_under_threshold()
         
-        print("\nRunning Test Case 2: Trigger Draft Creation")
-        test_case_2_trigger_draft()
+        # print("\nRunning Test Case 2: Trigger Draft Creation")
+        # test_case_2_trigger_draft()
         
-        # print("\nRunning Test Case 3: Updates After Draft Triggered")
-        test_case_3_above_threshold_already_processed()
+        # # print("\nRunning Test Case 3: Updates After Draft Triggered")
+        # test_case_3_above_threshold_already_processed()
         
     except Exception as e:
         print(f"Test execution failed: {str(e)}")
