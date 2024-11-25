@@ -64,7 +64,7 @@ aoai_embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
 
 primary_llm = AzureChatOpenAI(
     azure_deployment=aoai_deployment,
-    api_version="2024-05-01-preview",
+    api_version="2024-02-01",
     temperature=0.75,
     max_tokens=None,
     timeout=None,
@@ -73,7 +73,7 @@ primary_llm = AzureChatOpenAI(
     azure_endpoint=aoai_endpoint
 )
 
-API_VERSION = "2024-08-01-preview"
+API_VERSION = "2024-02-01"
 
 # Azure Blob Storage
 connect_str = os.getenv("STORAGE_ACCOUNT_CONNECTION_STRING")
@@ -81,6 +81,18 @@ storage_account_name = os.getenv("STORAGE_ACCOUNT_NAME")
 container_name = "resumes"
 
 # Primary LLM
+primary_llm_json = AzureChatOpenAI(
+    azure_deployment=aoai_deployment,
+    api_version="2024-02-01",
+    temperature=0,
+    max_tokens=None,
+    timeout=None,
+    max_retries=2,
+    api_key=aoai_key,
+    azure_endpoint=aoai_endpoint,
+    model_kwargs={"response_format": {"type": "json_object"}}
+)
+
 primary_llm_json = AzureChatOpenAI(
     azure_deployment=aoai_deployment,
     api_version="2024-05-01-preview",
@@ -106,7 +118,7 @@ except Exception as e:
 
 primary_llm_description_json = AzureChatOpenAI(
     azure_deployment=aoai_deployment,
-    api_version="2024-08-01-preview",
+    api_version="2024-02-01",
     temperature=0,
     max_tokens=None,
     timeout=None,
@@ -139,7 +151,7 @@ primary_llm_description_json = AzureChatOpenAI(
 
 primary_llm_insertion_json = AzureChatOpenAI(
     azure_deployment=aoai_deployment,
-    api_version="2024-08-01-preview",
+    api_version="2024-02-01",
     temperature=0,
     max_tokens=None,
     timeout=None,
@@ -174,7 +186,7 @@ primary_embedding_llm = AzureOpenAIEmbeddings(
     model=aoai_embedding_deployment,
     azure_endpoint=aoai_endpoint,
     api_key=aoai_key,
-    openai_api_version="2024-08-01-preview"
+    openai_api_version="2024-02-01"
 )
 
 from typing import List, Dict, Optional, Union
@@ -452,7 +464,8 @@ class ResumeUpdateProcessor:
                     "body": {
                         "contentType": "Text",
                         "content": f"Hello,\n\nYou have a pending resume update that requires your review.Please take a moment to review and approve these updates to keep your resume current\n\n Review your updates here: {review_link}\n\n\This is an automated message. Please do not reply to this email."},
-                    "toRecipients": [{"emailAddress": {"address": f"{reciever_email}"}}]
+                    "toRecipients": [{"emailAddress": {"address": f"{reciever_email}"}},
+                                     ]
                 }}
             access_token = self._get_access_token()
             # Send email request
@@ -1028,8 +1041,8 @@ class ResumeUpdateProcessor:
             {"role": "system", "content": insertion_system_prompt},
             {"role": "user", "content": full_text}
         ]
-        
-        result = primary_llm_insertion_json.invoke(messages)
+        print(messages)
+        result = primary_llm_json.  invoke(messages)
         result_json = json.loads(result.content)
         
         print("Analysis:", result_json['analysis'])

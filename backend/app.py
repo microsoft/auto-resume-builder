@@ -27,7 +27,7 @@ def get_current_user_id():
     Placeholder function to get the current user's ID.
     Will be replaced with actual authentication logic later.
     """
-    return "85990"
+    return "33961"
 
 @app.route('/get_current_user', methods=['GET'])
 def get_current_user():
@@ -188,14 +188,12 @@ def download_resume():
             }), 404
 
         # Create the full blob path
-        output_folder = os.environ.get("STORAGE_ACCOUNT_OUTPUT_FOLDER", "updated")
-        blob_path = f"{output_folder}/{filename}"
-
+        blob_path = filename
         content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
         # Get container client
-        container_client = processor.blob_service_client.get_container_client(processor.resume_container_name)
-        
+        container_client = processor.blob_service_client.get_container_client(processor.save_container_name)
+        print('found Blob for download', blob_path)
         # Get blob client
         blob_client = container_client.get_blob_client(blob_path)
 
