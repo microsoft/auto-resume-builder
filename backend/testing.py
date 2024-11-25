@@ -33,7 +33,7 @@ def test_case_1_under_threshold():
     print("\n=== Test Case 1: Multiple Events Under Threshold ===")
     
     # Load and process first event
-    test_entry1 = load_json_file('events', 'event_6.json')
+    test_entry1 = load_json_file('events', 'event_7.json')
     print(f"\nProcessing first entry ({test_entry1['job_hours']} hours)...")
     result1 = processor.process_key_member(test_entry1)
     print(f"Result: {result1}")

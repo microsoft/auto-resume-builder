@@ -27,7 +27,7 @@ def get_current_user_id():
     Placeholder function to get the current user's ID.
     Will be replaced with actual authentication logic later.
     """
-    return "33961"
+    return "715720"
 
 @app.route('/get_current_user', methods=['GET'])
 def get_current_user():
