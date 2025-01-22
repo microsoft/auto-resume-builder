@@ -448,7 +448,7 @@ stateDiagram-v2
   - User engagement metrics
 
 ### Performance Optimization
-- Cosmos DB partition strategy
+- Cosmos DB partition and indexing strategy
 - Notification batching
 - UI rendering optimization
 - Caching strategy
